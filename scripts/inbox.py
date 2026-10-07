@@ -200,6 +200,7 @@ async def cmd_reply(args: argparse.Namespace) -> int:
         body=args.text,
         twilio_sid=sids[0] if sids else None,
         metadata={"source": "operator", "ticket_ref": args.ref},
+        phone=cliente["phone"],
     )
 
     if ticket["status"] == "open":
@@ -234,6 +235,7 @@ async def cmd_close(args: argparse.Namespace) -> int:
             body=args.message,
             twilio_sid=sids[0] if sids else None,
             metadata={"source": "operator", "ticket_ref": args.ref},
+            phone=cliente["phone"],
         )
         print(f"Avisado a {cliente['phone']}")
 

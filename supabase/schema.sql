@@ -272,3 +272,96 @@ select * from (values
      'aprobación crediticia. Emitimos factura A y factura B.')
 ) as seed(title, source, content)
 where not exists (select 1 from public.knowledge_docs);
+
+-- ============================================================================
+-- CRM: bandeja, estado bot/humano por conversación y operadores
+-- ============================================================================
+
+-- ── Teléfono en cada mensaje ────────────────────────────────────────────────
+-- Un número que todavía no es cliente deja mensajes con client_id NULL. Sin el
+-- teléfono en la fila, esos mensajes no aparecen en ninguna bandeja.
+alter table public.messages add column if not exists phone text;
+
+update public.messages m
+   set phone = c.phone
+  from public.clients c
+ where m.client_id = c.id
+   and m.phone is null;
+
+create index if not exists messages_phone_created_idx
+    on public.messages (phone, created_at desc);
+
+-- ── Conversaciones ──────────────────────────────────────────────────────────
+-- El estado vive acá y no en el panel: el que tiene que leerlo es el webhook,
+-- antes de llamar a Claude.
+--   bot          el agente atiende
+--   needs_human  el agente escaló ("pidió humano"); sigue contestando
+--   human        una persona tomó el chat; el agente no contesta
+create table if not exists public.conversations (
+    phone            text primary key,
+    status           text not null default 'bot'
+                     check (status in ('bot', 'needs_human', 'human')),
+    -- Lo que el humano acordó con el cliente. Entra al contexto del agente
+    -- cuando le devuelven la conversación, para que no lo contradiga.
+    handoff_note     text,
+    last_message_at  timestamptz not null default now(),
+    updated_at       timestamptz not null default now()
+);
+
+create index if not exists conversations_last_message_idx
+    on public.conversations (last_message_at desc);
+
+drop trigger if exists conversations_touch on public.conversations;
+create trigger conversations_touch before update on public.conversations
+    for each row execute function public.touch_updated_at();
+
+insert into public.conversations (phone, last_message_at)
+select phone, max(created_at)
+  from public.messages
+ where phone is not null
+ group by phone
+on conflict (phone) do nothing;
+
+-- ── Operadores ──────────────────────────────────────────────────────────────
+-- Tener cuenta en Supabase Auth no alcanza para leer chats de clientes: hay que
+-- estar en esta tabla. Alta: insert into operators (user_id) values ('<uuid>');
+create table if not exists public.operators (
+    user_id     uuid primary key references auth.users (id) on delete cascade,
+    created_at  timestamptz not null default now()
+);
+
+alter table public.conversations enable row level security;
+alter table public.operators     enable row level security;
+
+create or replace function public.is_operator()
+returns boolean language sql stable security definer set search_path = public as $fn$
+    select exists (select 1 from public.operators where user_id = auth.uid());
+$fn$;
+
+-- El panel sólo lee. Toda escritura pasa por el agente con la service_role key.
+do $do$
+declare t text;
+begin
+    foreach t in array array['conversations', 'messages', 'clients', 'escalations'] loop
+        execute format('drop policy if exists operators_read on public.%I', t);
+        execute format(
+            'create policy operators_read on public.%I for select to authenticated
+             using (public.is_operator())', t);
+    end loop;
+end;
+$do$;
+
+-- ── Realtime ────────────────────────────────────────────────────────────────
+do $do$
+declare t text;
+begin
+    foreach t in array array['conversations', 'messages'] loop
+        if not exists (
+            select 1 from pg_publication_tables
+             where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t
+        ) then
+            execute format('alter publication supabase_realtime add table public.%I', t);
+        end if;
+    end loop;
+end;
+$do$;

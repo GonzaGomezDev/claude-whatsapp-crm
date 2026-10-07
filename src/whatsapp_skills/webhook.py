@@ -66,7 +66,7 @@ async def _process(app: Any, phone: str, body: str, sid: str | None, num_media: 
     recorded: dict[str, Any] | None = None
     try:
         recorded = await db.record_message(
-            client_id=None, direction="inbound", body=body, twilio_sid=sid
+            client_id=None, direction="inbound", body=body, twilio_sid=sid, phone=phone
         )
         if sid and recorded is None:
             log.info("duplicate_ignored", sid=sid)
@@ -75,6 +75,11 @@ async def _process(app: Any, phone: str, body: str, sid: str | None, num_media: 
         # Sin registro no hay idempotencia, pero dejar al cliente sin respuesta
         # es peor. Seguimos y lo dejamos anotado.
         log.warning("inbound_record_failed", error=str(exc))
+
+    try:
+        await db.touch_conversation(phone)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("conversation_touch_failed", error=str(exc))
 
     decision = route_message(body, num_media)
     if decision.route is Route.IGNORE:
@@ -142,6 +147,7 @@ async def _reply(state: Any, phone: str, text: str, client_id: str | None) -> No
             direction="outbound",
             body=text,
             twilio_sid=sids[0] if sids else None,
+            phone=phone,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("outbound_record_failed", error=str(exc))

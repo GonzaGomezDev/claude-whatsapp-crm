@@ -41,6 +41,7 @@ update public.clients set claude_session_id = null;
 --     public.payments,
 --     public.tickets,
 --     public.messages,
+--     public.conversations,
 --     public.clients
 -- restart identity cascade;
 
@@ -59,6 +60,7 @@ update public.clients set claude_session_id = null;
 
 select 'clients'        as tabla, count(*) as filas from public.clients
 union all select 'messages',       count(*) from public.messages
+union all select 'conversations',  count(*) from public.conversations
 union all select 'tickets',        count(*) from public.tickets
 union all select 'payments',       count(*) from public.payments
 union all select 'escalations',    count(*) from public.escalations

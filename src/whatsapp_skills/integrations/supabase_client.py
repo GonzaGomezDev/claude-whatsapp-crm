@@ -13,6 +13,7 @@ otro backend, tocás un archivo y las 5 skills siguen andando.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import Any
 
 from supabase import Client, create_client
@@ -102,10 +103,12 @@ class Database:
         body: str,
         twilio_sid: str | None = None,
         metadata: dict[str, Any] | None = None,
+        phone: str | None = None,
     ) -> dict[str, Any] | None:
         """Devuelve None si el twilio_sid ya existía (reintento de Twilio)."""
         payload = {
             "client_id": client_id,
+            "phone": phone,
             "direction": direction,
             "body": body,
             "twilio_sid": twilio_sid,
@@ -149,6 +152,58 @@ class Database:
             .execute()
         )
         return list(reversed(rows))  # cronológico para armar el historial
+
+    # ── Conversaciones (CRM) ────────────────────────────────────────────────
+
+    async def touch_conversation(self, phone: str) -> dict[str, Any]:
+        """Marca actividad y devuelve la conversación (status, handoff_note).
+
+        Upsert: la primera vez que escribe un número, la fila nace en 'bot'.
+        """
+        rows = await self._run(
+            lambda: self._client.table("conversations")
+            .upsert(
+                {"phone": phone, "last_message_at": datetime.now(UTC).isoformat()},
+                on_conflict="phone",
+            )
+            .execute()
+        )
+        return rows[0]
+
+    async def get_conversation(self, phone: str) -> dict[str, Any] | None:
+        rows = await self._run(
+            lambda: self._client.table("conversations")
+            .select("*")
+            .eq("phone", phone)
+            .limit(1)
+            .execute()
+        )
+        return rows[0] if rows else None
+
+    async def set_conversation_status(
+        self,
+        phone: str,
+        status: str,
+        *,
+        only_from: str | None = None,
+        handoff_note: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Cambia el estado. Con `only_from`, sólo si estaba en ese estado.
+
+        Devuelve la fila actualizada, o None si no había nada que cambiar.
+        """
+
+        def query() -> Any:
+            patch: dict[str, Any] = {"status": status}
+            if handoff_note is not None:
+                patch["handoff_note"] = handoff_note
+            q = self._client.table("conversations").update(patch).eq("phone", phone)
+            if only_from:
+                q = q.eq("status", only_from)
+            return q.execute()
+
+        rows = await self._run(query)
+        return rows[0] if rows else None
 
     # ── Tickets ─────────────────────────────────────────────────────────────
 
@@ -330,6 +385,19 @@ class Database:
             .update({"status": "resolved"})
             .eq("ticket_id", ticket_id)
             .in_("status", ["pending", "claimed"])
+            .execute()
+        )
+        return len(rows or [])
+
+    async def move_escalations_for_client(
+        self, client_id: str, from_status: str, to_status: str
+    ) -> int:
+        """Tomar el chat reclama los escalados; devolverlo los resuelve."""
+        rows = await self._run(
+            lambda: self._client.table("escalations")
+            .update({"status": to_status})
+            .eq("client_id", client_id)
+            .eq("status", from_status)
             .execute()
         )
         return len(rows or [])
