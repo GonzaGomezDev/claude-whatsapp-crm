@@ -1,0 +1,335 @@
+"""Acceso a Supabase.
+
+Usamos el cliente sync de `supabase` envuelto en `asyncio.to_thread`. Es a
+propósito: el cliente async existe pero cambió de nombre entre versiones, y una
+llamada sync dentro de un `to_thread` funciona igual en todas. El costo es un
+thread del pool por query, que para este volumen es irrelevante.
+
+Todo el acceso a datos vive acá. Las tools de las skills no arman queries: le
+piden cosas a esta clase. Así, cuando cambiás de Supabase a Postgres pelado o a
+otro backend, tocás un archivo y las 5 skills siguen andando.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from supabase import Client, create_client
+
+
+class Database:
+    def __init__(self, url: str, service_role_key: str) -> None:
+        self._client: Client = create_client(url, service_role_key)
+
+    # ── Helper ──────────────────────────────────────────────────────────────
+
+    async def _run(self, fn: Any) -> Any:
+        """Ejecuta una query sync en el threadpool y devuelve `.data`."""
+        response = await asyncio.to_thread(fn)
+        return getattr(response, "data", response)
+
+    # ── Clientes ────────────────────────────────────────────────────────────
+
+    async def find_client_by_phone(self, phone: str) -> dict[str, Any] | None:
+        rows = await self._run(
+            lambda: self._client.table("clients")
+            .select("*")
+            .eq("phone", phone)
+            .limit(1)
+            .execute()
+        )
+        return rows[0] if rows else None
+
+    async def find_clients_by_name(self, name: str, limit: int = 5) -> list[dict[str, Any]]:
+        return await self._run(
+            lambda: self._client.table("clients")
+            .select("*")
+            .ilike("name", f"%{name}%")
+            .limit(limit)
+            .execute()
+        )
+
+    async def create_client_row(
+        self,
+        *,
+        phone: str,
+        name: str | None = None,
+        company: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "phone": phone,
+            "name": name,
+            "company": company,
+            "metadata": metadata or {},
+        }
+        # upsert sobre phone: si dos mensajes del mismo número entran a la vez,
+        # el segundo no explota con una violación de unique.
+        rows = await self._run(
+            lambda: self._client.table("clients")
+            .upsert(payload, on_conflict="phone")
+            .execute()
+        )
+        return rows[0]
+
+    async def update_client_row(self, client_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        rows = await self._run(
+            lambda: self._client.table("clients")
+            .update(patch)
+            .eq("id", client_id)
+            .execute()
+        )
+        if not rows:
+            raise LookupError(f"No existe el cliente {client_id}.")
+        return rows[0]
+
+    async def set_claude_session(self, client_id: str, session_id: str) -> None:
+        await self._run(
+            lambda: self._client.table("clients")
+            .update({"claude_session_id": session_id})
+            .eq("id", client_id)
+            .execute()
+        )
+
+    # ── Mensajes ────────────────────────────────────────────────────────────
+
+    async def record_message(
+        self,
+        *,
+        client_id: str | None,
+        direction: str,
+        body: str,
+        twilio_sid: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Devuelve None si el twilio_sid ya existía (reintento de Twilio)."""
+        payload = {
+            "client_id": client_id,
+            "direction": direction,
+            "body": body,
+            "twilio_sid": twilio_sid,
+            "metadata": metadata or {},
+        }
+        try:
+            rows = await self._run(
+                lambda: self._client.table("messages").insert(payload).execute()
+            )
+        except Exception as exc:  # noqa: BLE001
+            # 23505 = unique_violation. Es el camino feliz de la idempotencia:
+            # Twilio reintentó y este mensaje ya se procesó.
+            if "23505" in str(exc) or "duplicate key" in str(exc).lower():
+                return None
+            raise
+        return rows[0] if rows else None
+
+    async def attach_message_client(self, message_id: str, client_id: str) -> None:
+        """Asocia un mensaje entrante a su cliente.
+
+        El webhook graba el entrante ANTES de saber de quién es (necesita el
+        insert temprano para la idempotencia por twilio_sid). Sin este backfill
+        el mensaje queda con client_id NULL y `recent_messages` no lo devuelve
+        nunca: el modelo termina viendo sólo sus propias respuestas.
+        """
+        await self._run(
+            lambda: self._client.table("messages")
+            .update({"client_id": client_id})
+            .eq("id", message_id)
+            .is_("client_id", "null")
+            .execute()
+        )
+
+    async def recent_messages(self, client_id: str, limit: int = 10) -> list[dict[str, Any]]:
+        rows = await self._run(
+            lambda: self._client.table("messages")
+            .select("direction, body, created_at")
+            .eq("client_id", client_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return list(reversed(rows))  # cronológico para armar el historial
+
+    # ── Tickets ─────────────────────────────────────────────────────────────
+
+    async def create_ticket_row(
+        self,
+        *,
+        client_id: str,
+        ticket_type: str,
+        subject: str | None,
+        priority: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        rows = await self._run(
+            lambda: self._client.table("tickets")
+            .insert(
+                {
+                    "client_id": client_id,
+                    "type": ticket_type,
+                    "subject": subject,
+                    "priority": priority,
+                    "metadata": metadata or {},
+                }
+            )
+            .execute()
+        )
+        return rows[0]
+
+    async def get_ticket_by_ref(self, ticket_ref: int) -> dict[str, Any] | None:
+        rows = await self._run(
+            lambda: self._client.table("tickets")
+            .select("*, clients(id, phone, name, company)")
+            .eq("ref", ticket_ref)
+            .limit(1)
+            .execute()
+        )
+        return rows[0] if rows else None
+
+    async def update_ticket_row(
+        self,
+        ticket_ref: int,
+        patch: dict[str, Any],
+        metadata_patch: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """`metadata_patch` se MEZCLA con lo que ya había.
+
+        Mandar metadata dentro de `patch` reemplaza la columna jsonb entera y se
+        lleva puesto el `details` que había guardado create_ticket — que es
+        justo el contexto que el equipo humano necesita para atender el ticket.
+        """
+        if metadata_patch:
+            actual = await self.get_ticket_by_ref(ticket_ref)
+            if actual is None:
+                raise LookupError(f"No existe el ticket {ticket_ref}.")
+            patch = {**patch, "metadata": {**(actual.get("metadata") or {}), **metadata_patch}}
+
+        rows = await self._run(
+            lambda: self._client.table("tickets")
+            .update(patch)
+            .eq("ref", ticket_ref)
+            .execute()
+        )
+        if not rows:
+            raise LookupError(f"No existe el ticket {ticket_ref}.")
+        return rows[0]
+
+    async def list_open_tickets(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Todos los tickets abiertos, de todos los clientes. Para el operador."""
+        return await self._run(
+            lambda: self._client.table("tickets")
+            .select("ref, type, status, priority, subject, created_at, "
+                    "clients(phone, name, company)")
+            .in_("status", ["open", "in_progress", "waiting_client"])
+            .order("created_at", desc=False)
+            .limit(limit)
+            .execute()
+        )
+
+    async def last_inbound_at(self, client_id: str) -> str | None:
+        """Cuándo escribió el cliente por última vez (ventana de 24 h de WhatsApp)."""
+        rows = await self._run(
+            lambda: self._client.table("messages")
+            .select("created_at")
+            .eq("client_id", client_id)
+            .eq("direction", "inbound")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return rows[0]["created_at"] if rows else None
+
+    async def open_tickets(self, client_id: str) -> list[dict[str, Any]]:
+        return await self._run(
+            lambda: self._client.table("tickets")
+            .select("ref, type, status, priority, subject, created_at")
+            .eq("client_id", client_id)
+            .in_("status", ["open", "in_progress", "waiting_client"])
+            .order("created_at", desc=True)
+            .execute()
+        )
+
+    # ── Knowledge ───────────────────────────────────────────────────────────
+
+    async def search_knowledge(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        return await self._run(
+            lambda: self._client.rpc(
+                "search_knowledge", {"query_text": query, "match_limit": limit}
+            ).execute()
+        )
+
+    # ── Pagos ───────────────────────────────────────────────────────────────
+
+    async def create_payment_row(self, payload: dict[str, Any]) -> dict[str, Any]:
+        rows = await self._run(
+            lambda: self._client.table("payments").insert(payload).execute()
+        )
+        return rows[0]
+
+    async def get_payment(self, payment_id: str) -> dict[str, Any] | None:
+        rows = await self._run(
+            lambda: self._client.table("payments")
+            .select("*")
+            .eq("id", payment_id)
+            .limit(1)
+            .execute()
+        )
+        return rows[0] if rows else None
+
+    async def update_payment_row(
+        self, payment_id: str, patch: dict[str, Any]
+    ) -> dict[str, Any]:
+        rows = await self._run(
+            lambda: self._client.table("payments")
+            .update(patch)
+            .eq("id", payment_id)
+            .execute()
+        )
+        if not rows:
+            raise LookupError(f"No existe el pago {payment_id}.")
+        return rows[0]
+
+    async def payments_for_client(
+        self, client_id: str, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        def query() -> Any:
+            q = (
+                self._client.table("payments")
+                .select("id, status, amount_cents, currency, payment_url, created_at")
+                .eq("client_id", client_id)
+            )
+            if status:
+                q = q.eq("status", status)
+            return q.order("created_at", desc=True).limit(10).execute()
+
+        return await self._run(query)
+
+    # ── Escalados ───────────────────────────────────────────────────────────
+
+    async def create_escalation_row(self, payload: dict[str, Any]) -> dict[str, Any]:
+        rows = await self._run(
+            lambda: self._client.table("escalations").insert(payload).execute()
+        )
+        return rows[0]
+
+    async def list_pending_escalations(self, limit: int = 50) -> list[dict[str, Any]]:
+        return await self._run(
+            lambda: self._client.table("escalations")
+            .select("id, reason, summary, status, created_at, ticket_id, "
+                    "clients(phone, name)")
+            .in_("status", ["pending", "claimed"])
+            .order("created_at", desc=False)
+            .limit(limit)
+            .execute()
+        )
+
+    async def resolve_escalations_for_ticket(self, ticket_id: str) -> int:
+        """Cerrar el ticket cierra su escalado. Si no, la cola del equipo nunca baja."""
+        rows = await self._run(
+            lambda: self._client.table("escalations")
+            .update({"status": "resolved"})
+            .eq("ticket_id", ticket_id)
+            .in_("status", ["pending", "claimed"])
+            .execute()
+        )
+        return len(rows or [])
