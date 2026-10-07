@@ -299,12 +299,12 @@ class Database:
             .execute()
         )
 
-    async def last_inbound_at(self, client_id: str) -> str | None:
-        """Cuándo escribió el cliente por última vez (ventana de 24 h de WhatsApp)."""
+    async def last_inbound_at(self, phone: str) -> str | None:
+        """Cuándo escribió el número por última vez (ventana de 24 h de WhatsApp)."""
         rows = await self._run(
             lambda: self._client.table("messages")
             .select("created_at")
-            .eq("client_id", client_id)
+            .eq("phone", phone)
             .eq("direction", "inbound")
             .order("created_at", desc=True)
             .limit(1)

@@ -26,7 +26,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -36,30 +36,9 @@ from whatsapp_skills.config import get_settings  # noqa: E402
 from whatsapp_skills.integrations.supabase_client import Database  # noqa: E402
 from whatsapp_skills.integrations.twilio_client import WhatsAppClient  # noqa: E402
 from whatsapp_skills.observability.logging import force_utf8_output  # noqa: E402
-
-WINDOW = timedelta(hours=24)
-
+from whatsapp_skills.window import _parse_ts, window_remaining  # noqa: E402, F401
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
-
-
-def _parse_ts(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-
-def window_remaining(last_inbound: str | None, now: datetime | None = None) -> timedelta | None:
-    """Cuánto queda de la ventana de 24 h. None si ya se cerró o nunca escribió."""
-    started = _parse_ts(last_inbound)
-    if started is None:
-        return None
-    left = (started + WINDOW) - (now or datetime.now(UTC))
-    return left if left > timedelta(0) else None
 
 
 def _fmt_window(left: timedelta | None) -> str:
@@ -131,7 +110,7 @@ async def cmd_show(args: argparse.Namespace) -> int:
     cliente = ticket.get("clients") or {}
     historial, ultimo = await asyncio.gather(
         db.recent_messages(cliente["id"], 10) if cliente.get("id") else _empty(),
-        db.last_inbound_at(cliente["id"]) if cliente.get("id") else _none(),
+        db.last_inbound_at(cliente["phone"]) if cliente.get("phone") else _none(),
     )
 
     print(f"\nTICKET {ticket['ref']}  ·  {ticket['type']}  ·  {ticket['status']}"
@@ -168,7 +147,7 @@ async def cmd_reply(args: argparse.Namespace) -> int:
         print(f"El ticket {args.ref} no tiene un cliente con teléfono.", file=sys.stderr)
         return 1
 
-    restante = window_remaining(await db.last_inbound_at(cliente["id"]))
+    restante = window_remaining(await db.last_inbound_at(cliente["phone"]))
     if restante is None and not args.force:
         print(
             f"La ventana de 24 h con {cliente['phone']} está CERRADA.\n\n"
@@ -220,7 +199,7 @@ async def cmd_close(args: argparse.Namespace) -> int:
     cliente = ticket.get("clients") or {}
 
     if args.message:
-        restante = window_remaining(await db.last_inbound_at(cliente["id"]))
+        restante = window_remaining(await db.last_inbound_at(cliente["phone"]))
         if restante is None and not args.force:
             print(
                 "La ventana de 24 h está cerrada: no se puede avisar al cliente.\n"

@@ -20,6 +20,8 @@ type Message = {
   metadata: { source?: string }
 }
 
+const WINDOW_MS = 24 * 60 * 60 * 1000
+
 const LABEL: Record<Status, string> = { bot: 'IA', needs_human: 'Pidió humano', human: 'Humano' }
 
 export default function App() {
@@ -125,12 +127,25 @@ function Chat({ conversation, name, onBack }: { conversation: Conversation; name
     setError('')
     try {
       await callAgent(phone, action, body)
+      return true
     } catch (e) {
       setError((e as Error).message)
+      return false
     } finally {
       setBusy(false)
     }
   }
+
+  async function send(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const form = e.currentTarget
+    const text = String(new FormData(form).get('text')).trim()
+    if (text && (await act('reply', { text }))) form.reset()
+  }
+
+  // La ventana de 24 h corre desde el último mensaje del cliente. El agente la vuelve a chequear al enviar.
+  const lastInbound = messages.findLast((m) => m.direction === 'inbound')
+  const windowOpen = !!lastInbound && Date.now() - new Date(lastInbound.created_at).getTime() < WINDOW_MS
 
   useEffect(() => {
     setMessages([])
@@ -182,6 +197,18 @@ function Chat({ conversation, name, onBack }: { conversation: Conversation; name
         ))}
         </ol>
       </div>
+      {status === 'human' &&
+        (windowOpen ? (
+          <form className="composer" onSubmit={send}>
+            <textarea name="text" rows={2} placeholder="Escribile al cliente" required />
+            <button disabled={busy}>Enviar</button>
+          </form>
+        ) : (
+          <p className="composer closed">
+            La ventana de 24 h está cerrada: el cliente no escribe hace más de un día y WhatsApp solo acepta
+            una plantilla aprobada.
+          </p>
+        ))}
     </main>
   )
 }
