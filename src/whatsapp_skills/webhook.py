@@ -115,7 +115,8 @@ async def _process(app: Any, phone: str, body: str, sid: str | None, num_media: 
         result = await state.backend.run(convo, ctx)
     except Exception as exc:  # noqa: BLE001
         log.error("agent_failed", error=str(exc), error_type=type(exc).__name__)
-        await _reply(state, phone, FALLBACK_REPLY, client_id=ctx.client_id)
+        if await _still_bot(db, phone, FALLBACK_REPLY):
+            await _reply(state, phone, FALLBACK_REPLY, client_id=ctx.client_id)
         return
 
     client_id = ctx.client_id or (convo.client or {}).get("id")
@@ -138,7 +139,29 @@ async def _process(app: Any, phone: str, body: str, sid: str | None, num_media: 
         except Exception as exc:  # noqa: BLE001
             log.warning("session_persist_failed", error=str(exc))
 
-    await _reply(state, phone, result.reply_text, client_id=client_id)
+    if await _still_bot(db, phone, result.reply_text):
+        await _reply(state, phone, result.reply_text, client_id=client_id)
+
+
+async def _still_bot(db: Any, phone: str, text: str) -> bool:
+    """Segunda lectura del estado, justo antes de mandar.
+
+    La primera fue antes de llamar a Claude, y el agente tarda segundos. Si en
+    ese medio el operador tomó el chat, la respuesta del bot no sale: queda en
+    los logs por si el operador la quiere ver.
+
+    ponytail: entre esta lectura y el envío quedan milisegundos de ventana (antes
+    eran segundos). Cerrarla del todo pide un lock por conversación en la base.
+    """
+    try:
+        conversation = await db.get_conversation(phone)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("conversation_recheck_failed", error=str(exc))
+        return True
+    if (conversation or {}).get("status") == "human":
+        log.info("reply_dropped", phone=phone, reason="chat_tomado", text=text[:200])
+        return False
+    return True
 
 
 async def _attach_to_client(db: Any, recorded: dict[str, Any] | None, phone: str) -> None:

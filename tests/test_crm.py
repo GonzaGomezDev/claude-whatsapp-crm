@@ -94,3 +94,17 @@ async def test_en_modo_bot_contesta_el_agente():
 
     assert backend.calls == 1
     assert app.state.whatsapp.sent == ["Respuesta del bot"]
+
+
+async def test_si_toman_el_chat_mientras_claude_genera_la_respuesta_no_sale():
+    # El webhook contesta 200 y procesa en segundo plano: el agente tarda ~8 s.
+    # Si el operador aprieta "Tomar chat" en ese medio, la primera lectura ya
+    # pasó y la respuesta del bot saldría encima de la del humano.
+    db = FakeDB("bot")
+    backend = FakeBackend(during_run=lambda: setattr(db, "status", "human"))
+    app = _app(db, backend)
+
+    await _process(app, PHONE, "necesito el presupuesto", "SM_IN", 0)
+
+    assert backend.calls == 1
+    assert app.state.whatsapp.sent == []
