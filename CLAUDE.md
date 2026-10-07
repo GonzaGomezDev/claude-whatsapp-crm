@@ -8,12 +8,20 @@ Un CRM para WhatsApp construido arriba de un agente de atención con Claude Agen
 viene de `GonzaGomezDev/claude-whatsapp-chatbot-skills@86997cf` (copiado, no es dependencia) y el CRM
 se construye encima. Todo lo que sigue a la línea divisoria describe el agente.
 
-### Alcance del CRM
+### Cómo funciona el CRM
 
-Bandeja visual con todas las conversaciones en vivo, estado bot/humano por conversación, "Tomar chat"
-que pausa al bot de verdad, responder desde la bandeja y "Devolver a la IA". Hoy `escalate_to_human`
-registra la escalación y avisa, pero nada impide que el bot siga contestando. `scripts/inbox.py` es
-el antecesor de consola (ya bloquea respuestas fuera de la ventana de 24 h).
+- `conversations` (una fila por teléfono) guarda `status`: `bot`, `needs_human` (lo marca
+  `escalate_to_human`; el bot sigue contestando) o `human` (el bot no contesta). El estado vive en la
+  base porque el que lo lee es el webhook.
+- `webhook._process` lee el estado antes del router y del agente, y otra vez justo antes de enviar
+  (`_still_bot`): el agente tarda segundos y el operador puede tomar el chat en ese medio.
+- `messages.phone` existe para que la bandeja muestre números que todavía no son clientes.
+- El panel (`web/`) sólo lee, con la anon key y RLS restringida a la tabla `operators`. Tomar, devolver
+  y responder pasan por `crm.py` (JWT de Supabase Auth → operador). Twilio y la service key nunca
+  llegan al navegador.
+- Al devolver el chat, la nota del operador (`handoff_note`) entra en `prompt.dynamic_context`, después
+  del breakpoint de cache.
+- `window.py` es la ventana de 24 h, compartida por `crm.py` y `scripts/inbox.py`.
 
 ### Restricciones
 
@@ -58,11 +66,16 @@ scripts/sync_skills.py    Copies skills/ -> .claude/skills/ for Claude Code
 ## Commands
 
 ```bash
-pytest                              # 94 tests, no credentials needed
+pytest                              # no credentials needed
 ruff check .
 python scripts/sync_skills.py       # after editing any SKILL.md
 uvicorn whatsapp_skills.main:app --reload --port 8000
+cd web && npm run dev                # panel; needs web/.env (see web/.env.example)
+cd web && npm run build              # type-check + build (Vercel root dir: web/)
 ```
+
+`tests/test_resilience.py::test_half_open_deja_pasar_una_sola_sonda` is timing-dependent and
+occasionally flakes; rerun before debugging it.
 
 ## Non-negotiable rules
 
