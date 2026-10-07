@@ -27,6 +27,8 @@ class Conversation:
     open_tickets: list[dict[str, Any]] = field(default_factory=list)
     # session_id de Claude Code, para --resume. Sin uso en messages_api.
     session_id: str | None = None
+    # Lo que acordó el humano antes de devolver el chat (CRM).
+    handoff_note: str | None = None
 
     def as_messages(self) -> list[dict[str, Any]]:
         """Historial + mensaje actual, en el formato de la Messages API."""

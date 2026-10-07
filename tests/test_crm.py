@@ -108,3 +108,15 @@ async def test_si_toman_el_chat_mientras_claude_genera_la_respuesta_no_sale():
 
     assert backend.calls == 1
     assert app.state.whatsapp.sent == []
+
+
+def test_la_nota_del_humano_entra_al_contexto_del_agente():
+    from whatsapp_skills.agent.backend import Conversation
+    from whatsapp_skills.agent.prompt import dynamic_context
+
+    nota = "Le prometí envío gratis en el próximo pedido."
+    con_nota = dynamic_context(Conversation(phone=PHONE, message="hola", handoff_note=nota))
+    sin_nota = dynamic_context(Conversation(phone=PHONE, message="hola"))
+
+    assert nota in con_nota
+    assert "devolvió" not in sin_nota

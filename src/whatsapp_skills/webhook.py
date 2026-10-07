@@ -100,7 +100,7 @@ async def _process(app: Any, phone: str, body: str, sid: str | None, num_media: 
         await _reply(state, phone, decision.reply or "", client_id=None)
         return
 
-    convo = await build_conversation(db, phone, body)
+    convo = await build_conversation(db, phone, body, conversation.get("handoff_note"))
     ctx = SkillContext(
         phone=phone,
         settings=state.settings,

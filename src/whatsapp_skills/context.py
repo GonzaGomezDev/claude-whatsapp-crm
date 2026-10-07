@@ -23,12 +23,14 @@ log = get_logger(__name__)
 HISTORY_LIMIT = 10
 
 
-async def build_conversation(db: Database, phone: str, message: str) -> Conversation:
+async def build_conversation(
+    db: Database, phone: str, message: str, handoff_note: str | None = None
+) -> Conversation:
     """Arma la Conversation. Nunca levanta: sin contexto igual se puede responder."""
     client = await _safe(db.find_client_by_phone(phone), "find_client_by_phone")
 
     if not client:
-        return Conversation(phone=phone, message=message)
+        return Conversation(phone=phone, message=message, handoff_note=handoff_note)
 
     # Historial y tickets no dependen entre sí: van en paralelo.
     history, tickets = await asyncio.gather(
@@ -43,6 +45,7 @@ async def build_conversation(db: Database, phone: str, message: str) -> Conversa
         client=client,
         open_tickets=tickets or [],
         session_id=client.get("claude_session_id"),
+        handoff_note=handoff_note,
     )
 
 

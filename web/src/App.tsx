@@ -120,6 +120,7 @@ function Chat({ conversation, name, onBack }: { conversation: Conversation; name
   const { phone, status } = conversation
   const [messages, setMessages] = useState<Message[]>([])
   const [busy, setBusy] = useState(false)
+  const [returning, setReturning] = useState(false)
   const [error, setError] = useState('')
 
   async function act(action: string, body?: object) {
@@ -134,6 +135,12 @@ function Chat({ conversation, name, onBack }: { conversation: Conversation; name
     } finally {
       setBusy(false)
     }
+  }
+
+  async function giveBack(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    const note = String(new FormData(e.currentTarget).get('note')).trim()
+    if (await act('return', { note })) setReturning(false)
   }
 
   async function send(e: FormEvent<HTMLFormElement>) {
@@ -179,12 +186,22 @@ function Chat({ conversation, name, onBack }: { conversation: Conversation; name
         </div>
         <span className={`tag ${status}`}>{LABEL[status]}</span>
         {status === 'human' ? (
-          <button disabled={busy} onClick={() => act('return')}>Devolver a la IA</button>
+          <button disabled={busy || returning} onClick={() => setReturning(true)}>Devolver a la IA</button>
         ) : (
           <button disabled={busy} onClick={() => act('take')}>Tomar chat</button>
         )}
       </header>
       {error && <p className="error banner">{error}</p>}
+      {returning && status === 'human' && (
+        <form className="handoff" onSubmit={giveBack}>
+          <label htmlFor="note">¿Qué acordaste con el cliente? La IA lo va a respetar.</label>
+          <textarea id="note" name="note" rows={2} placeholder="Ej.: le prometí envío gratis en el próximo pedido" />
+          <div>
+            <button type="button" className="link" onClick={() => setReturning(false)}>Cancelar</button>
+            <button disabled={busy}>Devolver</button>
+          </div>
+        </form>
+      )}
       {/* column-reverse deja el scroll pegado abajo sin JS */}
       <div className="messages">
         <ol>

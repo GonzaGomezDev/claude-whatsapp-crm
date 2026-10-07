@@ -42,10 +42,18 @@ async def take(phone: str, request: Request, operator: str = Depends(require_ope
     return row
 
 
+class GiveBack(BaseModel):
+    # Lo que se acordó con el cliente. Entra al contexto del agente para que no
+    # lo contradiga. Vacío borra la nota anterior.
+    note: str = Field(default="", max_length=1000)
+
+
 @router.post("/conversations/{phone}/return")
-async def give_back(phone: str, request: Request, operator: str = Depends(require_operator)) -> Any:
+async def give_back(
+    phone: str, body: GiveBack, request: Request, operator: str = Depends(require_operator)
+) -> Any:
     db = request.app.state.db
-    row = await db.set_conversation_status(phone, "bot")
+    row = await db.set_conversation_status(phone, "bot", handoff_note=body.note.strip())
     if row is None:
         raise HTTPException(404, "No existe esa conversación.")
     client = await db.find_client_by_phone(phone)

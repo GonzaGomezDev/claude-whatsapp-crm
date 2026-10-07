@@ -100,6 +100,13 @@ def dynamic_context(convo: Conversation) -> str:
         ]
         lines.append(f"Tickets abiertos: {json.dumps(summary, ensure_ascii=False)}")
 
+    if convo.handoff_note:
+        lines.append(
+            "Una persona del equipo atendió este chat y te lo devolvió con esta nota. "
+            "Respetá lo que se acordó y no lo contradigas: "
+            + json.dumps(convo.handoff_note, ensure_ascii=False)
+        )
+
     return "## Contexto de esta conversación\n\n" + "\n".join(lines)
 
 
