@@ -15,11 +15,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .agent.backend import AgentBackend
 from .agent.claude_cli import ClaudeCLIBackend
 from .agent.messages_api import MessagesAPIBackend
 from .config import Settings, get_settings
+from .crm import router as crm_router
 from .integrations.notifications import build_notifier
 from .integrations.payments import build_payment_provider
 from .integrations.supabase_client import Database
@@ -95,3 +97,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(webhook_router)
+app.include_router(crm_router)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[get_settings().crm_panel_origin],
+    allow_methods=["POST"],
+    allow_headers=["*"],
+)

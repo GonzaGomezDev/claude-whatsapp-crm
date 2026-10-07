@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { supabase } from './supabase'
+import { callAgent, supabase } from './supabase'
 
 type Status = 'bot' | 'needs_human' | 'human'
 
@@ -117,6 +117,20 @@ function Inbox() {
 function Chat({ conversation, name, onBack }: { conversation: Conversation; name?: string; onBack: () => void }) {
   const { phone, status } = conversation
   const [messages, setMessages] = useState<Message[]>([])
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function act(action: string, body?: object) {
+    setBusy(true)
+    setError('')
+    try {
+      await callAgent(phone, action, body)
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   useEffect(() => {
     setMessages([])
@@ -149,7 +163,13 @@ function Chat({ conversation, name, onBack }: { conversation: Conversation; name
           {name && <small>{phone}</small>}
         </div>
         <span className={`tag ${status}`}>{LABEL[status]}</span>
+        {status === 'human' ? (
+          <button disabled={busy} onClick={() => act('return')}>Devolver a la IA</button>
+        ) : (
+          <button disabled={busy} onClick={() => act('take')}>Tomar chat</button>
+        )}
       </header>
+      {error && <p className="error banner">{error}</p>}
       {/* column-reverse deja el scroll pegado abajo sin JS */}
       <div className="messages">
         <ol>

@@ -76,10 +76,19 @@ async def _process(app: Any, phone: str, body: str, sid: str | None, num_media: 
         # es peor. Seguimos y lo dejamos anotado.
         log.warning("inbound_record_failed", error=str(exc))
 
+    # Si una persona tomó el chat, el bot no contesta: ni el agente ni las
+    # respuestas fijas del router. Si la base no responde seguimos en modo bot;
+    # un cliente sin respuesta es peor que una respuesta de más.
+    conversation: dict[str, Any] = {}
     try:
-        await db.touch_conversation(phone)
+        conversation = await db.touch_conversation(phone)
     except Exception as exc:  # noqa: BLE001
         log.warning("conversation_touch_failed", error=str(exc))
+
+    if conversation.get("status") == "human":
+        log.info("routed", route="human", reason="chat_tomado")
+        await _attach_to_client(db, recorded, phone)
+        return
 
     decision = route_message(body, num_media)
     if decision.route is Route.IGNORE:
@@ -130,6 +139,19 @@ async def _process(app: Any, phone: str, body: str, sid: str | None, num_media: 
             log.warning("session_persist_failed", error=str(exc))
 
     await _reply(state, phone, result.reply_text, client_id=client_id)
+
+
+async def _attach_to_client(db: Any, recorded: dict[str, Any] | None, phone: str) -> None:
+    """Sin el agente nadie asocia el entrante al cliente, y el historial que el
+    bot recibe cuando le devuelven el chat saldría sin estos mensajes."""
+    if not recorded:
+        return
+    try:
+        client = await db.find_client_by_phone(phone)
+        if client:
+            await db.attach_message_client(recorded["id"], client["id"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("inbound_attach_failed", error=str(exc))
 
 
 async def _reply(state: Any, phone: str, text: str, client_id: str | None) -> None:

@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     # ── Handoff ─────────────────────────────────────────────────────────────
     handoff_notify_url: str = ""
 
+    # ── CRM ─────────────────────────────────────────────────────────────────
+    # Origen del panel, para CORS. En Vercel: https://tu-panel.vercel.app
+    crm_panel_origin: str = "http://localhost:5173"
+
     # ── Resiliencia ─────────────────────────────────────────────────────────
     circuit_breaker_threshold: int = Field(default=3, ge=1)
     circuit_breaker_cooldown_s: float = Field(default=30.0, gt=0)

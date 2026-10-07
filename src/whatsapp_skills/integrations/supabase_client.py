@@ -205,6 +205,24 @@ class Database:
         rows = await self._run(query)
         return rows[0] if rows else None
 
+    async def operator_id(self, access_token: str) -> str | None:
+        """user_id del operador dueño del token, o None si no es operador."""
+        try:
+            response = await asyncio.to_thread(self._client.auth.get_user, access_token)
+        except Exception:  # noqa: BLE001
+            return None  # token vencido o inválido
+        user = getattr(response, "user", None)
+        if user is None:
+            return None
+        rows = await self._run(
+            lambda: self._client.table("operators")
+            .select("user_id")
+            .eq("user_id", user.id)
+            .limit(1)
+            .execute()
+        )
+        return user.id if rows else None
+
     # ── Tickets ─────────────────────────────────────────────────────────────
 
     async def create_ticket_row(

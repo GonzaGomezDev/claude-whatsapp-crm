@@ -11,7 +11,10 @@ from __future__ import annotations
 from typing import Any
 
 from whatsapp_skills.integrations.notifications import Escalation
+from whatsapp_skills.observability.logging import get_logger
 from whatsapp_skills.skills.base import SkillContext, skill_tool
+
+log = get_logger(__name__)
 
 REASONS = [
     "client_requested",
@@ -113,6 +116,14 @@ async def escalate_to_human(
             },
         }
     )
+
+    # La bandeja la muestra como "pidió humano". Sólo desde 'bot': si ya hay una
+    # persona en el chat, no se le pisa el estado.
+    try:
+        await ctx.db.set_conversation_status(ctx.phone, "needs_human", only_from="bot")
+    except Exception as exc:  # noqa: BLE001
+        # El escalado ya quedó registrado; la etiqueta es secundaria.
+        log.warning("needs_human_label_failed", error=str(exc))
 
     notified = await _notify_team(
         ctx,
