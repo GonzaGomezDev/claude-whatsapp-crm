@@ -71,8 +71,9 @@ class Settings(BaseSettings):
     handoff_notify_url: str = ""
 
     # ── CRM ─────────────────────────────────────────────────────────────────
-    # Origen del panel, para CORS. En Vercel: https://tu-panel.vercel.app
-    crm_panel_origin: str = "http://localhost:5173"
+    # Key PUBLISHABLE (sb_publishable_...). Es pública: el agente se la pasa al
+    # panel en /config.js. Sin ella el panel no puede loguear ni leer.
+    supabase_publishable_key: str = ""
 
     # ── Resiliencia ─────────────────────────────────────────────────────────
     circuit_breaker_threshold: int = Field(default=3, ge=1)

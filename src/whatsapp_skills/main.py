@@ -11,17 +11,18 @@ silencioso con el primer cliente real.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 
 from .agent.backend import AgentBackend
 from .agent.claude_cli import ClaudeCLIBackend
 from .agent.messages_api import MessagesAPIBackend
-from .config import Settings, get_settings
+from .config import REPO_ROOT, Settings, get_settings
 from .crm import router as crm_router
 from .integrations.notifications import build_notifier
 from .integrations.supabase_client import Database
@@ -85,6 +86,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         tools=len(registry.tools),
         webhook=settings.webhook_url or "(sin PUBLIC_BASE_URL)",
     )
+    if not settings.supabase_publishable_key:
+        log.warning("panel_sin_config", falta="SUPABASE_PUBLISHABLE_KEY")
     yield
     log.info("shutdown")
 
@@ -98,18 +101,24 @@ app = FastAPI(
 app.include_router(webhook_router)
 app.include_router(crm_router)
 
-
-class PanelCORS(CORSMiddleware):
-    """CORS para el panel. Lee el origen al construir el stack (al arrancar), no
-    al importar: la configuración se valida en el arranque, como el resto."""
-
-    def __init__(self, app: Any) -> None:
-        super().__init__(
-            app,
-            allow_origins=[get_settings().crm_panel_origin],
-            allow_methods=["POST"],
-            allow_headers=["*"],
-        )
+PANEL_DIR = REPO_ROOT / "web" / "dist"
 
 
-app.add_middleware(PanelCORS)
+@app.get("/config.js", include_in_schema=False)
+async def panel_config() -> Response:
+    """Config pública del panel. Se lee al cargar la página, no al compilar: la
+    misma imagen sirve en cualquier servidor sin rebuild."""
+    settings = get_settings()
+    config = {
+        "supabaseUrl": settings.supabase_url,
+        "supabaseKey": settings.supabase_publishable_key,
+    }
+    return Response(
+        f"window.CRM_CONFIG = {json.dumps(config)};", media_type="application/javascript"
+    )
+
+
+# El panel compilado (npm run build) se sirve desde el mismo origen que la API:
+# sin CORS y con una sola URL para todo. Va último para no tapar las rutas.
+if PANEL_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=PANEL_DIR, html=True), name="panel")
