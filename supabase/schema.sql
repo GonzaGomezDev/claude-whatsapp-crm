@@ -172,27 +172,7 @@ begin
 end;
 $fn$;
 
--- ── Skill 4: pagos ──────────────────────────────────────────────────────────
-create table if not exists public.payments (
-    id           uuid primary key default gen_random_uuid(),
-    client_id    uuid not null references public.clients (id) on delete cascade,
-    ticket_id    uuid references public.tickets (id) on delete set null,
-    provider     text not null default 'stripe',
-    external_id  text,
-    status       text not null default 'pending'
-                 check (status in ('pending', 'paid', 'failed', 'expired', 'refunded')),
-    amount_cents bigint not null check (amount_cents > 0),
-    currency     text not null default 'usd',
-    payment_url  text,
-    metadata     jsonb not null default '{}'::jsonb,
-    created_at   timestamptz not null default now(),
-    updated_at   timestamptz not null default now()
-);
-
-create index if not exists payments_client_status_idx on public.payments (client_id, status);
-create index if not exists payments_external_idx on public.payments (provider, external_id);
-
--- ── Skill 5: escalados a humano ─────────────────────────────────────────────
+-- ── Skill 4: escalados a humano ─────────────────────────────────────────────
 create table if not exists public.escalations (
     id          uuid primary key default gen_random_uuid(),
     client_id   uuid references public.clients (id) on delete cascade,
@@ -219,7 +199,7 @@ $fn$;
 do $do$
 declare t text;
 begin
-    foreach t in array array['clients', 'tickets', 'payments'] loop
+    foreach t in array array['clients', 'tickets'] loop
         execute format('drop trigger if exists %I_touch on public.%I', t, t);
         execute format(
             'create trigger %I_touch before update on public.%I
@@ -235,7 +215,6 @@ $do$;
 alter table public.clients        enable row level security;
 alter table public.messages       enable row level security;
 alter table public.tickets        enable row level security;
-alter table public.payments       enable row level security;
 alter table public.escalations    enable row level security;
 alter table public.knowledge_docs enable row level security;
 

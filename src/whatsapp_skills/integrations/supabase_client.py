@@ -7,7 +7,7 @@ thread del pool por query, que para este volumen es irrelevante.
 
 Todo el acceso a datos vive acá. Las tools de las skills no arman queries: le
 piden cosas a esta clase. Así, cuando cambiás de Supabase a Postgres pelado o a
-otro backend, tocás un archivo y las 5 skills siguen andando.
+otro backend, tocás un archivo y las skills siguen andando.
 """
 
 from __future__ import annotations
@@ -330,52 +330,6 @@ class Database:
                 "search_knowledge", {"query_text": query, "match_limit": limit}
             ).execute()
         )
-
-    # ── Pagos ───────────────────────────────────────────────────────────────
-
-    async def create_payment_row(self, payload: dict[str, Any]) -> dict[str, Any]:
-        rows = await self._run(
-            lambda: self._client.table("payments").insert(payload).execute()
-        )
-        return rows[0]
-
-    async def get_payment(self, payment_id: str) -> dict[str, Any] | None:
-        rows = await self._run(
-            lambda: self._client.table("payments")
-            .select("*")
-            .eq("id", payment_id)
-            .limit(1)
-            .execute()
-        )
-        return rows[0] if rows else None
-
-    async def update_payment_row(
-        self, payment_id: str, patch: dict[str, Any]
-    ) -> dict[str, Any]:
-        rows = await self._run(
-            lambda: self._client.table("payments")
-            .update(patch)
-            .eq("id", payment_id)
-            .execute()
-        )
-        if not rows:
-            raise LookupError(f"No existe el pago {payment_id}.")
-        return rows[0]
-
-    async def payments_for_client(
-        self, client_id: str, status: str | None = None
-    ) -> list[dict[str, Any]]:
-        def query() -> Any:
-            q = (
-                self._client.table("payments")
-                .select("id, status, amount_cents, currency, payment_url, created_at")
-                .eq("client_id", client_id)
-            )
-            if status:
-                q = q.eq("status", status)
-            return q.order("created_at", desc=True).limit(10).execute()
-
-        return await self._run(query)
 
     # ── Escalados ───────────────────────────────────────────────────────────
 

@@ -11,7 +11,6 @@ EXPECTED_SKILLS = {
     "client-management",
     "ticketing",
     "knowledge",
-    "payments",
     "human-handoff",
 }
 

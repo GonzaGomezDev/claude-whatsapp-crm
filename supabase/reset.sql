@@ -27,7 +27,7 @@ update public.clients set claude_session_id = null;
 
 -- ── Nivel 2: vaciar el estado operativo ─────────────────────────────────────
 --
--- Clientes, conversaciones, tickets, pagos y escalados. La knowledge base NO se
+-- Clientes, conversaciones, tickets y escalados. La knowledge base NO se
 -- toca: es contenido, no estado.
 --
 -- `restart identity` devuelve el contador de tickets a 4000, así que la próxima
@@ -38,7 +38,6 @@ update public.clients set claude_session_id = null;
 
 -- truncate table
 --     public.escalations,
---     public.payments,
 --     public.tickets,
 --     public.messages,
 --     public.conversations,
@@ -62,7 +61,6 @@ select 'clients'        as tabla, count(*) as filas from public.clients
 union all select 'messages',       count(*) from public.messages
 union all select 'conversations',  count(*) from public.conversations
 union all select 'tickets',        count(*) from public.tickets
-union all select 'payments',       count(*) from public.payments
 union all select 'escalations',    count(*) from public.escalations
 union all select 'knowledge_docs', count(*) from public.knowledge_docs
 order by tabla;

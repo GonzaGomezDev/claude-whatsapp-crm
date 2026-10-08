@@ -60,7 +60,7 @@ class FakeWhatsApp:
 def _app(db: FakeDB, backend: FakeBackend) -> Any:
     state = SimpleNamespace(
         db=db, backend=backend, whatsapp=FakeWhatsApp(),
-        settings=None, payments=None, notifier=None,
+        settings=None, notifier=None,
     )
     return SimpleNamespace(state=state)
 

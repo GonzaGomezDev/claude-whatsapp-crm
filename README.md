@@ -1,7 +1,7 @@
 # claude-whatsapp-skills
 
-Un agente de WhatsApp construido sobre **Claude Agent Skills**: cinco skills
-coordinadas —clientes, tickets, knowledge base, pagos y escalado a humano— con
+Un agente de WhatsApp construido sobre **Claude Agent Skills**: cuatro skills
+coordinadas —clientes, tickets, knowledge base y escalado a humano— con
 circuit breaker, rate limiting por tool y logging estructurado.
 
 No es un prototipo. Es la estructura que necesitás cuando el agente tiene que
@@ -49,7 +49,7 @@ python scripts/measure_tokens.py
 Compara cuatro configuraciones con `count_tokens` sobre el mismo mensaje y te
 imprime la diferencia. Corrélo antes de creerle a nadie —incluido este README.
 
-> Con 12 tools el ahorro por diferir todavía es moderado. La brecha crece con el
+> Con 9 tools el ahorro por diferir todavía es moderado. La brecha crece con el
 > tamaño del tool set: a las 40 o 50 tools es la diferencia entre que entre o no
 > entre en presupuesto.
 
@@ -86,17 +86,16 @@ presupuesto de rate limit. Cuando una se cae, las otras cuatro siguen.
 
 Detalles de cada capa y por qué está donde está: [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
 
-### Las 5 skills
+### Las 4 skills
 
 | Skill | Tools | Qué resuelve |
 |---|---|---|
 | `client-management` | `find_client`, `create_client`, `update_client` | Quién está escribiendo |
 | `ticketing` | `create_ticket`, `find_open_tickets`, `update_ticket_status` | Lo que el equipo tiene que hacer |
 | `knowledge` | `knowledge_search` | Precios, plazos, políticas |
-| `payments` | `create_payment_link`, `check_payment_status`, `confirm_payment` | Cobrar |
 | `human-handoff` | `escalate_to_human` | La salida de emergencia |
 
-Más la tool built-in `load_skill_guide`. Total: **12 tools**.
+Más la tool built-in `load_skill_guide`. Total: **9 tools**.
 
 Cada skill es una carpeta con el formato real de Agent Skills:
 
@@ -172,7 +171,7 @@ significa que el agente está respondiendo **sin ninguna tool**.
 
 ## Setup
 
-Necesitás cuentas en Supabase, Twilio y Stripe. Con `AGENT_BACKEND=cli` no
+Necesitás cuentas en Supabase y Twilio. Con `AGENT_BACKEND=cli` no
 necesitás API key de Anthropic.
 
 ### 1. Instalar
@@ -188,7 +187,7 @@ cp .env.example .env
 ### 2. Supabase
 
 Creá un proyecto, abrí el **SQL Editor** y pegá `supabase/schema.sql` entero.
-Crea las seis tablas, la función de búsqueda `search_knowledge` y tres documentos
+Crea las tablas, la función de búsqueda `search_knowledge` y tres documentos
 de ejemplo en la knowledge base.
 
 En *Settings → API* copiá la URL y la **`service_role`** key (no la `anon`: el
@@ -210,11 +209,7 @@ TWILIO_AUTH_TOKEN=...
 TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
 ```
 
-### 4. Stripe
-
-`sk_test_...` de [dashboard.stripe.com/apikeys](https://dashboard.stripe.com/apikeys).
-
-### 5. Exponer el webhook
+### 4. Exponer el webhook
 
 ```bash
 python scripts/sync_skills.py            # sólo si vas a usar AGENT_BACKEND=cli
@@ -230,7 +225,7 @@ Twilio apuntando a `https://<tu-ngrok>.ngrok-free.app/webhook/whatsapp`.
 > configuraste en Twilio: `http` vs `https`, barra final de más, o un subdominio
 > de ngrok viejo.
 
-### 6. Probar
+### 5. Probar
 
 Escribile al número del sandbox desde tu WhatsApp. Mirá los logs.
 
@@ -432,7 +427,7 @@ uvicorn whatsapp_skills.main:app --reload --port 8000
 
 ## Una última cosa
 
-**No copies estas cinco skills tal cual.** Las tuyas van a ser otras: tu negocio
+**No copies estas cuatro skills tal cual.** Las tuyas van a ser otras: tu negocio
 no es cotizaciones y tickets. Lo que vale la pena copiar es el patrón —el
 registry como único camino de ejecución, la guía separada del schema, el error
 handling declarado por skill, el backend detrás de un `Protocol`.

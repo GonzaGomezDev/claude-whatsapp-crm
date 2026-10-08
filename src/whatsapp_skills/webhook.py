@@ -105,7 +105,6 @@ async def _process(app: Any, phone: str, body: str, sid: str | None, num_media: 
         phone=phone,
         settings=state.settings,
         db=db,
-        payments=state.payments,
         notifier=state.notifier,
         client_id=(convo.client or {}).get("id"),
         conversation=convo.history,

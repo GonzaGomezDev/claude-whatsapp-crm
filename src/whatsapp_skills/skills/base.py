@@ -158,7 +158,6 @@ class SkillContext:
     phone: str
     settings: Any
     db: Any = None
-    payments: Any = None
     notifier: Any = None
     client_id: str | None = None
     conversation: list[dict[str, Any]] = field(default_factory=list)

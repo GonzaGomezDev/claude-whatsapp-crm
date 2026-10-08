@@ -29,7 +29,6 @@ from pydantic import Field
 
 from ..config import get_settings
 from ..integrations.notifications import build_notifier
-from ..integrations.payments import build_payment_provider
 from ..integrations.supabase_client import Database
 from ..integrations.twilio_client import WhatsAppClient
 from ..observability.logging import configure_logging, get_logger
@@ -171,7 +170,6 @@ def main() -> None:
         phone=phone,
         settings=settings,
         db=Database(settings.supabase_url, settings.supabase_service_role_key),
-        payments=build_payment_provider(settings),
         notifier=build_notifier(
             settings,
             WhatsAppClient(

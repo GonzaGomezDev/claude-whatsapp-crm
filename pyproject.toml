@@ -1,7 +1,7 @@
 [project]
 name = "claude-whatsapp-crm"
 version = "0.1.0"
-description = "Agente de WhatsApp construido sobre Claude Agent Skills: 5 skills coordinadas, dos backends intercambiables."
+description = "Agente de WhatsApp construido sobre Claude Agent Skills: 4 skills coordinadas, dos backends intercambiables."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -12,7 +12,6 @@ dependencies = [
     "uvicorn[standard]>=0.32",
     "twilio>=9.3",
     "supabase>=2.9",
-    "stripe>=11.1",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
     "structlog>=24.4",

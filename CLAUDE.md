@@ -34,7 +34,7 @@ se construye encima. Todo lo que sigue a la línea divisoria describe el agente.
 ---
 
 A WhatsApp customer-service agent built on Claude Agent Skills. Python 3.11+,
-FastAPI, Anthropic SDK, Supabase, Twilio, Stripe.
+FastAPI, Anthropic SDK, Supabase, Twilio.
 
 ## Repo map
 
@@ -56,7 +56,7 @@ src/whatsapp_skills/
   skills/base.py          @skill_tool decorator, SkillTool, SkillContext
   skills/loader.py        SKILL.md frontmatter parser
   resilience/             Circuit breaker + per-tool token bucket
-  integrations/           Supabase, Twilio, payment providers
+  integrations/           Supabase, Twilio, handoff notifications
   observability/          structlog; the "demo" renderer is the on-camera format
 supabase/schema.sql       Idempotent; paste into the Supabase SQL editor
 scripts/measure_tokens.py Compares tool-exposure strategies with count_tokens
@@ -150,8 +150,8 @@ A WhatsApp message is untrusted input from anyone who knows the number.
 `--allowedTools` is **not** an exclusive allowlist — under `--permission-mode
 dontAsk` it pre-approves but does not restrict. A real run exposed 23 Claude Code
 built-ins (`Read`, `Glob`, `Grep`, `Bash`, `WebFetch`, `CronCreate`,
-`SendMessage`, …) alongside the 12 MCP tools, with `cwd` at the repo root — where
-`.env` holds live Twilio/Supabase/Stripe credentials.
+`SendMessage`, …) alongside the MCP tools, with `cwd` at the repo root — where
+`.env` holds live Twilio/Supabase credentials.
 
 Three layers keep it closed; do not remove any of them:
 
@@ -188,8 +188,8 @@ the agent actually created the ticket it told the customer about.
 
 ## What not to do
 
-- Do not mock the integrations. This repo talks to real Twilio, Supabase and
-  Stripe by design; the owner chose that explicitly.
+- Do not mock the integrations. This repo talks to real Twilio and Supabase
+  by design; the owner chose that explicitly.
 - Do not change the `demo` log renderer's output format. It is what appears
   on camera in the accompanying video.
 - Do not add `budget_tokens`, date-suffixed model IDs, or assistant prefills.

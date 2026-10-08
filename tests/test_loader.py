@@ -83,7 +83,7 @@ def test_yaml_invalido_falla_con_el_path():
 
 def test_carga_las_skills_reales_del_repo(skills_dir):
     docs = load_skill_docs(skills_dir)
-    assert len(docs) == 5
+    assert len(docs) == 4
     for name, doc in docs.items():
         assert doc.directory == name
         assert doc.body, f"{name}: el SKILL.md no tiene cuerpo"

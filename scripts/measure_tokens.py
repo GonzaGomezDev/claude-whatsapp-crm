@@ -11,10 +11,10 @@ backend cli no lo expone).
 
 Las cuatro configuraciones que compara:
 
-  A  inline      Las 12 tools + las 5 guías SKILL.md completas metidas en el
+  A  inline      Las 9 tools + las 4 guías SKILL.md completas metidas en el
                  system prompt. Es lo que hace la mayoría cuando quiere que el
                  modelo "sepa cómo usar" sus tools.
-  B  full        Las 12 tools + sólo las descripciones de las skills. El cuerpo
+  B  full        Las 9 tools + sólo las descripciones de las skills. El cuerpo
                  de cada guía se carga a demanda con load_skill_guide.
   C  deferred    tool_search + las tools con defer_loading. Claude descubre.
   D  sin skills  Sólo las 11 tools de negocio, sin capa de skills. El baseline
@@ -128,7 +128,7 @@ def main() -> int:
     print(
         "Nota honesta: lo que baja el costo no es agrupar tools en carpetas — es\n"
         "sacar la prosa de los schemas (B) y diferir las definiciones (C). Si C no\n"
-        "te da un ahorro grande acá, es porque con 12 tools el overhead de schema\n"
+        "te da un ahorro grande acá, es porque con 9 tools el overhead de schema\n"
         "todavía es chico; la diferencia crece con el tamaño del tool set."
     )
     return 0

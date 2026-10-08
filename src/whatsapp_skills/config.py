@@ -62,11 +62,6 @@ class Settings(BaseSettings):
     supabase_url: str = ""
     supabase_service_role_key: str = ""
 
-    # ── Pagos ───────────────────────────────────────────────────────────────
-    payment_provider: Literal["stripe"] = "stripe"
-    stripe_secret_key: str = ""
-    stripe_currency: str = "usd"
-
     # ── Handoff ─────────────────────────────────────────────────────────────
     handoff_notify_url: str = ""
 

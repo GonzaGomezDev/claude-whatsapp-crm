@@ -37,8 +37,8 @@ qué capa* falló sin leer un stack trace de cuarenta líneas.
 │                    └──────► SkillRegistry.dispatch ◄──────────────┤
 │                             timeout · breaker · rate limit · log  │
 │                                    │                              │
-│              ┌─────────┬───────────┼───────────┬─────────┐        │
-│         client-mgmt  ticketing  knowledge  payments  handoff      │
+│             ┌──────────────┬───────┴───────┬─────────────┐        │
+│        client-mgmt     ticketing       knowledge      handoff     │
 └─────────────────────────────┬─────────────────────────────────────┘
                               │ AgentResult
 ┌─────────────────────────────▼─────────────────────────────────────┐
@@ -114,8 +114,8 @@ class AgentBackend(Protocol):
 Las capas de arriba y de abajo no saben qué backend corrió. Se elige con
 `AGENT_BACKEND` en el `.env`.
 
-Es el mismo patrón que `PaymentProvider`: la lógica de negocio declara qué
-necesita, el adapter resuelve cómo. La Skill no cambia, cambia el backend.
+La lógica de negocio declara qué necesita, el adapter resuelve cómo. La Skill
+no cambia, cambia el backend.
 
 ### El loop manual (messages_api)
 
@@ -191,7 +191,7 @@ proceso de FastAPI. Para desarrollo es irrelevante; para producción se usa
 ┌─ tools ─────────────────────┐
 ├─ system[0]  PERSONA         │  ← estable, byte a byte
 │             + descripciones │
-│             de las 5 skills │
+│             de las 4 skills │
 │             cache_control ──┼──► breakpoint
 ├─ system[1]  contexto de     │  ← varía por conversación
 │             esta charla     │
@@ -263,7 +263,6 @@ latencia sin que nadie se entere.
 | tool | presupuesto | por qué |
 |---|---|---|
 | `find_client` | 5/min | pega a la base, es cara |
-| `create_payment_link` | 5/min | crea objetos en Stripe |
 | `knowledge_search` | 50/min | índice GIN, es barata |
 | `create_ticket` | 20/min | escritura, pero acotada |
 

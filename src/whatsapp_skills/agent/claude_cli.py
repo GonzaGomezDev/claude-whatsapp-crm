@@ -55,7 +55,7 @@ log = get_logger(__name__)
 MCP_SERVER_NAME = "skills"
 
 # Todas las tools built-in de Claude Code. El agente tiene que resolver con las
-# mismas 12 tools que en producción: cualquier otra es a la vez un agujero de
+# mismas tools que en producción: cualquier otra es a la vez un agujero de
 # seguridad y una divergencia entre backends que invalida la comparación.
 #
 # Si Claude Code agrega una tool nueva, esta lista queda incompleta — por eso

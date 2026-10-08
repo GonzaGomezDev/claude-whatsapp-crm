@@ -139,7 +139,7 @@ async def hacer_algo(ctx: SkillContext, cosa: str) -> dict[str, Any]:
 asyncio y una función sync bloquea el event loop entero. Si tenés una librería
 sync, envolvela en `asyncio.to_thread` como hace `integrations/supabase_client.py`.
 
-**`ctx` va primero**, siempre. Trae `phone`, `settings`, `db`, `payments`,
+**`ctx` va primero**, siempre. Trae `phone`, `settings`, `db`, `notifier`,
 `client_id`, `conversation` y un `scratch` para compartir cosas entre tools del
 mismo turno.
 
@@ -202,13 +202,13 @@ Una skill debería agrupar tools que:
 
 - comparten precondiciones (todas necesitan `client_id`),
 - fallan juntas (todas pegan a la misma base),
-- comparten reglas de negocio (todas mueven plata),
+- comparten reglas de negocio,
 - y tienen sentido como una unidad para alguien que no leyó el código.
 
-`payments` y `ticketing` están separadas aunque las dos escriban en Supabase,
-porque **fallan distinto**: que no se pueda crear un ticket es molesto, que se
-genere un enlace de pago duplicado es un problema serio. Manejo de errores
-distinto, skill distinta.
+`knowledge` y `ticketing` están separadas aunque las dos peguen a Supabase,
+porque **fallan distinto**: una búsqueda vacía se resuelve diciendo que no se
+sabe; un ticket que no se crea es una promesa al cliente que nadie va a cumplir.
+Manejo de errores distinto, skill distinta.
 
 Si dos skills tuyas tienen la misma sección de error handling, probablemente sean
 una sola.

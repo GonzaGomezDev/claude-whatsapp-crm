@@ -3,7 +3,7 @@
 Levantar:
     uvicorn whatsapp_skills.main:app --reload --port 8000
 
-Todo lo caro —registry, cliente de Supabase, proveedor de pagos, backend— se
+Todo lo caro —registry, cliente de Supabase, backend— se
 construye en el lifespan, no por request. Si algo está mal configurado, el
 proceso no arranca: preferimos un fallo ruidoso al arranque antes que uno
 silencioso con el primer cliente real.
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,7 +24,6 @@ from .agent.messages_api import MessagesAPIBackend
 from .config import Settings, get_settings
 from .crm import router as crm_router
 from .integrations.notifications import build_notifier
-from .integrations.payments import build_payment_provider
 from .integrations.supabase_client import Database
 from .integrations.twilio_client import WhatsAppClient
 from .observability.logging import configure_logging, get_logger
@@ -68,7 +68,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.registry = registry
     app.state.db = Database(settings.supabase_url, settings.supabase_service_role_key)
-    app.state.payments = build_payment_provider(settings)
     app.state.whatsapp = WhatsAppClient(
         settings.twilio_account_sid,
         settings.twilio_auth_token,
@@ -98,9 +97,19 @@ app = FastAPI(
 )
 app.include_router(webhook_router)
 app.include_router(crm_router)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[get_settings().crm_panel_origin],
-    allow_methods=["POST"],
-    allow_headers=["*"],
-)
+
+
+class PanelCORS(CORSMiddleware):
+    """CORS para el panel. Lee el origen al construir el stack (al arrancar), no
+    al importar: la configuración se valida en el arranque, como el resto."""
+
+    def __init__(self, app: Any) -> None:
+        super().__init__(
+            app,
+            allow_origins=[get_settings().crm_panel_origin],
+            allow_methods=["POST"],
+            allow_headers=["*"],
+        )
+
+
+app.add_middleware(PanelCORS)

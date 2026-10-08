@@ -4,7 +4,7 @@ description: >-
   Identificar y mantener los datos del cliente que escribe por WhatsApp. Buscar por
   teléfono o nombre, crear el cliente si es nuevo, y actualizar nombre, empresa o metadata
   cuando el cliente los menciona. Usala al principio de casi toda conversación: sin
-  client_id no se puede crear un ticket, generar un pago ni escalar a un humano.
+  client_id no se puede crear un ticket ni escalar a un humano.
 ---
 
 # Client Management
@@ -44,8 +44,8 @@ correcta: confirmá con el cliente antes de escribir nada sobre ese registro.
   pega a la base. Si la agotaste, seguí con lo que ya sabés y no reintentes en
   loop.
 - `error_type: timeout` o `circuit_open` — la base no responde. **No inventes un
-  `client_id`.** Sin identidad del cliente no se puede crear un ticket ni un
-  pago. Escalá con `escalate_to_human` usando
+  `client_id`.** Sin identidad del cliente no se puede crear un ticket.
+  Escalá con `escalate_to_human` usando
   `reason: "client_lookup_failed"` y avisale al cliente que lo pasás con una
   persona.
 - `error_type: bad_arguments` — mandaste mal los argumentos. Corregí y reintentá
