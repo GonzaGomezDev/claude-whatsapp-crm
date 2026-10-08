@@ -19,20 +19,33 @@ se construye encima. Todo lo que sigue a la línea divisoria describe el agente.
 - El agente sirve el panel compilado (`web/dist`, montado al final de `main.py`) y `/config.js` con la
   URL y la publishable key de Supabase leídas del `.env`: misma URL, sin CORS, sin variables de build.
   En dev, `npm run dev` hace proxy de `/crm` y `/config.js` a :8000.
-- El panel (`web/`) sólo lee, con la publishable key y RLS restringida a la tabla `operators`. Tomar,
-  devolver y responder pasan por `crm.py` (JWT de Supabase Auth → operador). Twilio y la key secreta
-  de Supabase nunca llegan al navegador. Keys: `sb_publishable_`/`sb_secret_` (las anon/service_role
+- Dos caminos de escritura. **CRUD de datos** (clientes, `notes`, tickets, `knowledge_docs`, rol/estado de
+  `operators`): el panel escribe directo con supabase-js; RLS dice quién (`is_operator()`, `is_admin()`) y
+  los grants de columna dicen qué columnas. **Efectos afuera o secretos** (Twilio, take/return/assign,
+  alta de usuarios, resumen IA): `crm.py`, con el JWT de Supabase Auth → `operator_for_token`. Si agregás
+  una columna editable desde el panel, también va su `grant update`. Twilio y la key secreta de Supabase
+  nunca llegan al navegador. Keys: `sb_publishable_`/`sb_secret_` (las anon/service_role
   legacy se retiran a fines de 2026; `SUPABASE_SERVICE_ROLE_KEY` se sigue aceptando como alias).
 - Al devolver el chat, la nota del operador (`handoff_note`) entra en `prompt.dynamic_context`, después
   del breakpoint de cache.
 - `window.py` es la ventana de 24 h, compartida por `crm.py` y `scripts/inbox.py`.
+- Roles `admin`/`agent` en `operators` (con `active`). Asignación: `conversations.assigned_to` (take asigna,
+  return libera, `_check_owner` deja tocar un chat ajeno sólo a un admin) y `tickets.assigned_to`.
+- `client_overview` (vista, `security_invoker`) calcula contactos = días distintos con inbound, por teléfono.
+- Triggers en la base, para que valgan desde el bot, el panel y la consola: cerrar un ticket resuelve sus
+  escalados; crear un cliente le asocia los mensajes previos de su teléfono; siempre queda un admin activo.
+- Resumen IA: `POST /crm/clients/{id}/summary` → `backend.complete()`. El historial es input no confiable:
+  `complete()` en `cli` corre con `--tools ""`, `BLOCKED_BUILTINS`, sin MCP y en el workspace vacío
+  (`tests/test_backend_contract.py` lo fija).
+- Panel: ruteo por hash (`lib/route.ts`), una página por archivo en `web/src/pages/`, operador actual y
+  equipo en `lib/team.tsx`.
 
 ### Setup
 
 - `.mcp.json` trae el MCP oficial de Supabase (OAuth vía `/mcp`). Puede crear el proyecto, aplicar
   `supabase/schema.sql` (idempotente, se manda entero) y devolver URL + publishable key. **No** devuelve
-  la key secreta ni crea usuarios: la secreta la pega el usuario y el operador se crea con
-  `scripts/create_operator.py <email>`.
+  la key secreta ni crea usuarios: la secreta la pega el usuario y el primer admin se crea con
+  `scripts/create_operator.py <email>` (default `--role admin`); el resto, desde el panel (Usuarios).
 - `/setup` (`.claude/commands/setup.md`) es el setup guiado de punta a punta; `.claude/settings.json`
   pre-aprueba sus comandos de sólo lectura. Si cambia el flujo (scripts, variables, pasos), actualizalo.
 - Un solo `.env`, el de la raíz. No existe `web/.env`.

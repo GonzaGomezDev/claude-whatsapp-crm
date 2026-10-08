@@ -4,13 +4,22 @@ Un CRM para WhatsApp donde la IA atiende sola y una persona puede meterse cuando
 hace falta. Cuando tomás un chat, **el bot se calla de verdad**: no sigue
 contestando por atrás mientras hablás vos.
 
-- **Bandeja en vivo** con todas las conversaciones, sin refrescar.
+- **Bandeja en vivo** con todas las conversaciones, sin refrescar, y filtros:
+  míos, sin asignar, pidió humano.
 - **Estado por conversación**: IA, pidió humano (el agente escaló) o humano.
-- **Tomar chat**: el bot deja de contestar en esa conversación. Los mensajes del
-  cliente siguen entrando a la bandeja.
+- **Tomar chat**: el chat queda asignado a vos y el bot deja de contestar. Otro
+  agente no puede responder encima; un admin puede reasignarlo.
 - **Responder desde el panel**, respetando la ventana de 24 h de WhatsApp.
 - **Devolver a la IA** con una nota de lo que acordaste, para que el bot no te
   contradiga.
+- **Clientes**: lista con búsqueda y ficha con cuántas veces escribió, primer y
+  último contacto, por qué escribió (tickets y escalados), notas internas,
+  historial completo y un **resumen con IA** a pedido.
+- **Tickets**: los que crea el bot, con filtros, estado, prioridad, asignado y
+  notas. Cerrar un ticket resuelve su escalado.
+- **Base de conocimiento** editable desde el panel, con una prueba de la misma
+  búsqueda que usa el bot.
+- **Usuarios y roles**: admins y agentes; alta, cambio de rol y desactivación.
 
 Usa la **API oficial de WhatsApp** a través de Twilio, no una API no oficial que
 te puede costar el número. La bandeja la sirve el mismo agente: no hay que
@@ -42,7 +51,7 @@ está más abajo, en [El agente por dentro](#el-agente-por-dentro).
  Supabase (conversations, messages) ── Realtime ──► Panel en web/ (operador)
         ▲                                                │
         └── /crm/take · /crm/return · /crm/reply ───────┘
-            el agente escribe con la service key
+            el agente escribe con la key secreta
 ```
 
 **El estado vive en la base, no en el panel.** La tabla `conversations` tiene una
@@ -57,11 +66,23 @@ generando, la primera lectura ya pasó. Por eso el estado se vuelve a leer justo
 antes de enviar: si cambió a `human`, la respuesta del bot no sale (queda en los
 logs como `reply_dropped`).
 
-**El panel sólo lee.** Lo sirve el agente en su misma URL. Usa la publishable key de Supabase con login, y las políticas de
-RLS sólo dejan leer a los usuarios cargados en la tabla `operators`. Todo lo que
-escribe (tomar, devolver, responder) pasa por el agente, que es el único que
-tiene la service key y las credenciales de Twilio. Nada de eso llega al
-navegador.
+**Dos caminos de escritura.** El panel lo sirve el agente en su misma URL y usa
+la publishable key de Supabase con login.
+
+- **Datos** (editar clientes, notas, tickets, base de conocimiento): el panel
+  escribe directo. RLS dice quién puede, y los grants de columna dicen qué: un
+  agente no puede cambiarse el rol ni pisar el resumen IA desde la consola del
+  navegador.
+- **Efectos afuera o secretos** (responder por Twilio, tomar, devolver y asignar,
+  dar de alta usuarios, resumen IA): pasan por el agente, el único que tiene la
+  key secreta de Supabase y las credenciales de Twilio.
+
+**Roles en la base.** `operators` guarda el rol (`admin` o `agent`) y si está
+activo. Las mismas funciones (`is_operator()`, `is_admin()`) protegen RLS y la API
+del agente. Un trigger impide quedarse sin admins activos.
+
+**Veces que nos escribió** = días distintos con mensajes entrantes. Se cuenta por
+teléfono, así incluye lo que llegó antes de que existiera el cliente.
 
 **Devolver a la IA con contexto.** El bot retoma con los últimos 10 mensajes,
 incluidos los del humano. Además, la nota que dejás al devolver entra a su
@@ -69,9 +90,9 @@ contexto: si prometiste algo, el bot lo sabe.
 
 ### Cuándo no te conviene
 
-- **Varias personas atendiendo a la vez.** No hay asignación de chats entre
-  operadores, ni reportes, ni app móvil. Con un equipo de más de dos personas,
-  Chatwoot (incluso la versión Cloud) te ahorra construir eso.
+- **Equipos grandes.** Hay roles y asignación de chats, pero no reportes,
+  métricas de tiempos de respuesta, reparto automático ni app móvil. Con un
+  equipo grande, Chatwoot (incluso la versión Cloud) te ahorra construir eso.
 - **Mensajes fuera de la ventana de 24 h.** El panel no manda plantillas: te
   avisa que la ventana está cerrada y no deja enviar.
 - **Audios, imágenes, Instagram o Messenger.** Sólo texto por WhatsApp.
@@ -151,8 +172,9 @@ Si tu proyecto todavía tiene las keys legacy (`anon` / `service_role`), tambié
 funcionan: `SUPABASE_SERVICE_ROLE_KEY` se acepta como alias. Supabase las retira
 a fines de 2026.
 
-4. Creá el operador. Son chats de clientes: el panel solo deja entrar a los
-   usuarios cargados en `operators`.
+4. Creá el primer admin. Son chats de clientes: el panel solo deja entrar a los
+   usuarios cargados en `operators`. El resto del equipo se da de alta desde el
+   panel, en **Usuarios**.
 
 ```bash
 python scripts/create_operator.py vos@tuempresa.com    # genera la contraseña y la muestra

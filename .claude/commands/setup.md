@@ -82,9 +82,10 @@ Chequeá `python --version` (3.11 o más), `node --version` (20 o más) y
 
    Si falla con `bad_jwt` o 401, la key está mal copiada o no es la secreta.
 
-## 3. Operador del panel
+## 3. Primer admin del panel
 
-1. Preguntá el email del operador.
+1. Preguntá el email. Va a ser admin: el resto del equipo lo da de alta él mismo
+   desde el panel, en **Usuarios**.
 2. Corré `PY scripts/create_operator.py <email>` y mostrale la contraseña
    generada. Es lo único secreto que sí se muestra: es suya y la necesita para
    entrar.
