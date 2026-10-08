@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python --version)",
+      "Bash(node --version)",
+      "Bash(ngrok version)",
+      "Bash(ngrok config check)",
+      "Bash(npm install)",
+      "Bash(npm run build)",
+      "Bash(curl -s http://127.0.0.1:4040/api/*)",
+      "Bash(curl -s http://localhost:8000/*)",
+      "Bash(.venv/Scripts/python scripts/twilio_webhook.py)",
+      "Bash(.venv/bin/python scripts/twilio_webhook.py)",
+      "Bash(.venv/Scripts/python scripts/sync_skills.py)",
+      "Bash(.venv/bin/python scripts/sync_skills.py)",
+      "mcp__supabase__list_organizations",
+      "mcp__supabase__get_organization",
+      "mcp__supabase__list_projects",
+      "mcp__supabase__get_project",
+      "mcp__supabase__get_cost",
+      "mcp__supabase__list_tables",
+      "mcp__supabase__get_project_url",
+      "mcp__supabase__get_publishable_keys",
+      "mcp__supabase__search_docs"
+    ]
+  }
+}

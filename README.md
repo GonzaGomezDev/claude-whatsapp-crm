@@ -13,8 +13,9 @@ contestando por atrás mientras hablás vos.
   contradiga.
 
 Usa la **API oficial de WhatsApp** a través de Twilio, no una API no oficial que
-te puede costar el número. El panel es un sitio estático (Vercel o cualquier
-hosting): no hay que instalar Chatwoot ni mantener un servidor para la bandeja.
+te puede costar el número. La bandeja la sirve el mismo agente: no hay que
+instalar Chatwoot ni mantener otro servidor. En local, `/setup` en Claude Code lo
+deja andando; para producción hay un `Dockerfile` (ver [Deploy en Hostinger](#deploy-en-hostinger)).
 
 Está construido arriba de
 [claude-whatsapp-chatbot-skills](https://github.com/GonzaGomezDev/claude-whatsapp-chatbot-skills),
@@ -56,7 +57,7 @@ generando, la primera lectura ya pasó. Por eso el estado se vuelve a leer justo
 antes de enviar: si cambió a `human`, la respuesta del bot no sale (queda en los
 logs como `reply_dropped`).
 
-**El panel sólo lee.** Usa la publishable key de Supabase con login, y las políticas de
+**El panel sólo lee.** Lo sirve el agente en su misma URL. Usa la publishable key de Supabase con login, y las políticas de
 RLS sólo dejan leer a los usuarios cargados en la tabla `operators`. Todo lo que
 escribe (tomar, devolver, responder) pasa por el agente, que es el único que
 tiene la service key y las credenciales de Twilio. Nada de eso llega al
@@ -79,80 +80,79 @@ contexto: si prometiste algo, el bot lo sabe.
 
 ## Setup
 
-El repo tiene dos piezas que corren por separado:
-
-- **El agente** (`src/`): FastAPI. Recibe el webhook de Twilio, llama a Claude y
-  expone los endpoints del CRM (`/crm/...`) para tomar, devolver y responder chats.
-- **El panel** (`web/`): Vite + React. Es un sitio estático que lee Supabase en
-  vivo y le pide al agente todo lo que escribe.
+El agente (FastAPI, en `src/`) recibe el webhook de Twilio, llama a Claude,
+expone los endpoints del CRM y **sirve el panel** (`web/`, Vite + React) en la
+misma URL. Es un solo proceso y un solo `.env`.
 
 Necesitás Python 3.11+, Node 20+, [ngrok](https://ngrok.com/download) y cuentas
 en Supabase (alcanza el plan gratis), Twilio y ngrok. Con `AGENT_BACKEND=cli` no
-necesitás API key de Anthropic: usa tu sesión de Claude Code, que tiene que estar
-instalado y logueado. Es para desarrollo local; en un servidor usá `messages_api`
-(ver [Los dos backends](#los-dos-backends)).
+necesitás API key de Anthropic: usa tu sesión de Claude Code. Es para desarrollo
+local; en un servidor usá `messages_api` (ver [Los dos backends](#los-dos-backends)).
 
-### Con Claude Code
-
-El repo trae un `.mcp.json` con el [MCP oficial de Supabase](https://supabase.com/docs/guides/getting-started/mcp).
-Abrí Claude Code en la carpeta del repo, aprobá el server `supabase` cuando lo
-pregunte, corré `/mcp` → `supabase` → **Authenticate** y logueate en el navegador.
-
-Desde ahí Claude puede hacer casi todo el paso 2: crear el proyecto (gratis),
-aplicar `supabase/schema.sql` y escribir la URL y la publishable key en los dos
-`.env`. Lo que el MCP no expone y queda de tu lado:
-
-- **La key secreta** (`sb_secret_...`): copiala de *Project Settings → API Keys*.
-- **Twilio y ngrok**: tus credenciales y el authtoken de ngrok.
-
-El resto de esta sección es el mismo setup paso a paso, por si lo querés hacer a
-mano o entender qué está haciendo Claude.
-
-### 1. Instalar
+### Con Claude Code: `/setup`
 
 ```bash
 git clone <este-repo> && cd claude-whatsapp-crm
+claude
+```
 
-# Agente
+1. Aprobá el server `supabase` del `.mcp.json` cuando Claude Code lo pregunte.
+2. Corré `/mcp` → `supabase` → **Authenticate** y logueate en el navegador.
+3. Corré `/setup`.
+
+Claude instala las dependencias, crea el proyecto de Supabase (gratis), aplica
+el schema, crea tu usuario operador, valida Twilio, levanta ngrok, apunta el
+webhook y arranca el agente. Te va a pedir:
+
+- **La key secreta de Supabase** (`sb_secret_...`). El MCP no la expone: la
+  pegás vos en `.env`.
+- **Tus credenciales de Twilio**, si no están en `.env`.
+- **El authtoken de ngrok**, la primera vez.
+- **Confirmación** antes de crear el proyecto y antes de cambiar el webhook de
+  tu número.
+
+Las instrucciones que sigue Claude están en
+[`.claude/commands/setup.md`](.claude/commands/setup.md). Abajo está el mismo
+setup a mano.
+
+### A mano
+
+**1. Instalar**
+
+```bash
 python -m venv .venv
 source .venv/bin/activate       # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 cp .env.example .env
-
-# Panel
-cd web
-npm install
-cp .env.example .env
-cd ..
+cd web && npm install && npm run build && cd ..
 ```
 
-### 2. Supabase
+**2. Supabase**
 
-Creá un proyecto (con el MCP, o desde el dashboard), abrí el **SQL Editor** y
-pegá `supabase/schema.sql` entero.
-Crea las tablas (incluidas `conversations` y `operators` del CRM), la función de
-búsqueda `search_knowledge`, las políticas de RLS, la publicación de Realtime y
-tres documentos de ejemplo en la knowledge base. Es idempotente: si actualizás el
-repo, volvé a correrlo.
+1. Creá un proyecto.
+2. Abrí el **SQL Editor** y pegá `supabase/schema.sql` entero. Crea:
+   - las tablas, incluidas `conversations` y `operators` del CRM;
+   - la búsqueda `search_knowledge`;
+   - las políticas de RLS;
+   - la publicación de Realtime;
+   - tres documentos de ejemplo en la knowledge base.
 
-En *Project Settings → API Keys* copiá la URL y las dos keys. Cada una va a un lugar distinto:
+   Es idempotente: si actualizás el repo, volvé a correrlo.
+
+3. En *Project Settings → API Keys* copiá la URL y las dos keys al `.env`:
 
 ```bash
-# .env (agente): la secreta, porque escribe en tablas con RLS activo
 SUPABASE_URL=https://xxxx.supabase.co
-SUPABASE_SECRET_KEY=sb_secret_...
-
-# web/.env (panel): la publishable, NUNCA la secreta. Va al navegador.
-VITE_SUPABASE_URL=https://xxxx.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+SUPABASE_SECRET_KEY=sb_secret_...            # sólo la usa el agente, nunca llega al navegador
+SUPABASE_PUBLISHABLE_KEY=sb_publishable_...  # pública: el agente se la pasa al panel
 ```
 
 Si tu proyecto todavía tiene las keys legacy (`anon` / `service_role`), también
 funcionan: `SUPABASE_SERVICE_ROLE_KEY` se acepta como alias. Supabase las retira
 a fines de 2026.
 
-**Crear el operador.** Son chats de clientes: el panel sólo deja entrar a los
-usuarios cargados en `operators`. Con el `.env` del agente completo:
+4. Creá el operador. Son chats de clientes: el panel solo deja entrar a los
+   usuarios cargados en `operators`.
 
 ```bash
 python scripts/create_operator.py vos@tuempresa.com    # genera la contraseña y la muestra
@@ -162,12 +162,11 @@ Recomendado: en *Authentication → Sign In / Providers* apagá **Allow new user
 sign up**. No es imprescindible (un usuario que no está en `operators` no ve ni
 toca nada), pero evita cuentas sueltas.
 
-### 3. Twilio
+**3. Twilio**
 
 Necesitás un número de WhatsApp en Twilio. Para probar alcanza el
 [WhatsApp Sandbox](https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn):
-mandá el código de unión (`join <código>`) desde tu teléfono. La unión vence a
-los 3 días; después hay que volver a mandarla.
+mandá `join <código>` desde tu teléfono. La unión vence a los 3 días.
 
 ```bash
 TWILIO_ACCOUNT_SID=AC...
@@ -175,52 +174,43 @@ TWILIO_AUTH_TOKEN=...
 TWILIO_WHATSAPP_FROM=whatsapp:+14155238886   # el sandbox, o tu número propio
 ```
 
-### 4. Levantar el agente
-
-Dos terminales, con el virtualenv activado:
+**4. ngrok y el webhook**
 
 ```bash
-# Terminal 1
-python scripts/sync_skills.py            # sólo si usás AGENT_BACKEND=cli
-uvicorn whatsapp_skills.main:app --reload --port 8000
-
-# Terminal 2 (la primera vez: ngrok config add-authtoken <tu-token>)
+ngrok config add-authtoken <tu-token>     # sólo la primera vez
 ngrok http 8000
 ```
 
 El plan gratis de ngrok te da un dominio fijo (`<algo>.ngrok-free.app`): es el
-mismo en cada arranque, así que estos dos pasos se hacen una sola vez.
+mismo en cada arranque, así que esto se configura una sola vez.
 
-1. Poné la URL en `PUBLIC_BASE_URL` del `.env` y reiniciá `uvicorn`.
-2. Apuntá el webhook de Twilio a `https://<tu-dominio>.ngrok-free.app/webhook/whatsapp`,
-   método POST:
-   - **Sandbox:** sólo desde la consola, en *Sandbox settings* → "When a message
+1. Poné la URL en `PUBLIC_BASE_URL` del `.env`.
+2. Apuntá el webhook de Twilio a `PUBLIC_BASE_URL/webhook/whatsapp`, método POST:
+   - **Número propio:** `python scripts/twilio_webhook.py --set`. Usa la Senders
+     API. Sin `--set`, solo muestra adónde apunta hoy.
+   - **Sandbox:** solo desde la consola, en *Sandbox settings* → "When a message
      comes in". No hay API para esto.
-   - **Número propio:** en la configuración del sender de WhatsApp. Ese se puede
-     cambiar también por API (Senders API).
-
-Para ver que levantó: `curl http://localhost:8000/health` devuelve el backend,
-el modelo, las skills cargadas (4 skills, 9 tools) y el estado de los circuit breakers.
 
 > La firma de Twilio se calcula sobre la **URL pública exacta**. Si te da 403 en
-> todos los mensajes, es casi seguro que `PUBLIC_BASE_URL` no coincide con lo que
-> configuraste en Twilio: `http` vs `https`, barra final de más, o un dominio de
-> ngrok viejo.
+> todos los mensajes, es casi seguro que `PUBLIC_BASE_URL` no coincide con el
+> webhook configurado en Twilio: `http` vs `https`, barra final de más, o un
+> dominio de ngrok viejo.
 
-### 5. Levantar el panel
-
-En una tercera terminal:
+**5. Levantar**
 
 ```bash
-cd web
-npm run dev                              # http://localhost:5173
+python scripts/sync_skills.py            # sólo si usás AGENT_BACKEND=cli
+uvicorn whatsapp_skills.main:app --port 8000
 ```
 
-`VITE_AGENT_URL` en `web/.env` apunta al agente. Con los dos corriendo en tu
-máquina, alcanza con `http://localhost:8000`. El agente sólo acepta pedidos del
-origen que diga `CRM_PANEL_ORIGIN` (por defecto `http://localhost:5173`).
+El panel queda en `http://localhost:8000`, y en el celular, en la URL de ngrok.
+`curl http://localhost:8000/health` devuelve el backend, el modelo y las skills
+cargadas (4 skills, 9 tools).
 
-### 6. Probar
+Para trabajar en el panel con recarga en caliente: `cd web && npm run dev`
+(http://localhost:5173). Vite le pasa `/crm` y `/config.js` al agente en :8000.
+
+### Probar
 
 1. Entrá al panel con el usuario operador.
 2. Escribile al número de Twilio desde tu WhatsApp. La conversación aparece en
@@ -235,23 +225,39 @@ origen que diga `CRM_PANEL_ORIGIN` (por defecto `http://localhost:5173`).
    nota en su contexto.
 
 Los logs del agente muestran cada decisión: el evento `routed` con `route=human`
-cuando el bot se calla y `reply_dropped` si tomaste el chat mientras Claude estaba generando.
+cuando el bot se calla y `reply_dropped` si tomaste el chat mientras Claude estaba
+generando.
 
-### Deploy del panel en Vercel
+### Deploy en Hostinger
 
-El panel es estático, no necesita servidor propio. El agente sigue donde ya corre
-(tu máquina con ngrok, o un VPS).
+El repo trae un `Dockerfile`: una sola imagen que compila el panel y lo sirve
+junto con el agente. Supabase sigue en la nube; solo se despliega esta app.
 
-1. En Vercel, importá el repo y poné **Root Directory** en `web`. Vercel detecta
-   Vite solo: build `npm run build`, output `dist`.
-2. Cargá las variables `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` y
-   `VITE_AGENT_URL`. Esta última tiene que ser la URL pública del agente (la de
-   ngrok o la de tu servidor), con `https`.
-3. Con la URL que te da Vercel, poné `CRM_PANEL_ORIGIN=https://tu-panel.vercel.app`
-   en el `.env` del agente y reinicialo.
+1. **VPS.** Contratá un VPS en Hostinger con la plantilla **EasyPanel**
+   (*VPS → OS & Panel → EasyPanel*). Hostinger también tiene Coolify y Docker
+   Manager; el Dockerfile sirve igual en los tres.
+2. **Dominio.** Creá un registro **A** (por ejemplo `crm.tudominio.com`) que
+   apunte a la IP del VPS.
+3. **App.** En EasyPanel: *Create project → App*.
+   - **Source:** tu repo de GitHub (rama `main`).
+   - **Build:** Dockerfile.
+4. **Variables.** En *Environment*, pegá tu `.env` con estos cambios:
 
-Las variables `VITE_*` se leen al compilar: si cambiás alguna en Vercel, hacé un
-redeploy.
+```bash
+AGENT_BACKEND=messages_api          # obligatorio en un servidor
+ANTHROPIC_API_KEY=sk-ant-...
+PUBLIC_BASE_URL=https://crm.tudominio.com
+```
+
+5. **Dominio en la app.** En *Domains*, agregá `crm.tudominio.com` con puerto
+   **8000**. EasyPanel saca el certificado HTTPS solo. Después, **Deploy**.
+6. **Webhook.** Apuntalo al dominio nuevo: `python scripts/twilio_webhook.py --set`
+   desde tu máquina, con el `PUBLIC_BASE_URL` nuevo en tu `.env`. Si usás el
+   sandbox, cambialo en la consola.
+
+Con eso el panel queda en `https://crm.tudominio.com` y ngrok ya no hace falta.
+Para probar la imagen antes de subirla: `docker compose up --build`
+(http://localhost:8000).
 
 ### Recibir los escalados
 
@@ -615,13 +621,16 @@ python scripts/measure_tokens.py    # requiere ANTHROPIC_API_KEY
 python scripts/sync_skills.py       # skills/ -> .claude/skills/
 python scripts/inbox.py list        # bandeja de consola
 python scripts/create_operator.py vos@tuempresa.com   # alta de un operador del panel
+python scripts/twilio_webhook.py [--set]               # ver o apuntar el webhook del número
 uvicorn whatsapp_skills.main:app --reload --port 8000
 ngrok http 8000
 
 # Panel (desde web/)
-npm run dev                         # http://localhost:5173
-npm run build                       # chequeo de tipos + build a dist/
-npm run preview                     # sirve el build local
+npm run build                       # chequeo de tipos + build a dist/ (lo sirve el agente)
+npm run dev                         # http://localhost:5173, con proxy al agente en :8000
+
+# Imagen de producción
+docker compose up --build           # http://localhost:8000
 ```
 
 ---

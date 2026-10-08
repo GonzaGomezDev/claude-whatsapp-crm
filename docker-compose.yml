@@ -1,0 +1,11 @@
+# Para probar la imagen en tu máquina: docker compose up --build
+# Panel en http://localhost:8000. Usa tu .env, con AGENT_BACKEND=messages_api.
+services:
+  crm:
+    build: .
+    env_file: .env
+    environment:
+      AGENT_BACKEND: messages_api
+    ports:
+      - "8000:8000"
+    restart: unless-stopped

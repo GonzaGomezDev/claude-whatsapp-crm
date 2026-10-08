@@ -16,6 +16,9 @@ se construye encima. Todo lo que sigue a la línea divisoria describe el agente.
 - `webhook._process` lee el estado antes del router y del agente, y otra vez justo antes de enviar
   (`_still_bot`): el agente tarda segundos y el operador puede tomar el chat en ese medio.
 - `messages.phone` existe para que la bandeja muestre números que todavía no son clientes.
+- El agente sirve el panel compilado (`web/dist`, montado al final de `main.py`) y `/config.js` con la
+  URL y la publishable key de Supabase leídas del `.env`: misma URL, sin CORS, sin variables de build.
+  En dev, `npm run dev` hace proxy de `/crm` y `/config.js` a :8000.
 - El panel (`web/`) sólo lee, con la publishable key y RLS restringida a la tabla `operators`. Tomar,
   devolver y responder pasan por `crm.py` (JWT de Supabase Auth → operador). Twilio y la key secreta
   de Supabase nunca llegan al navegador. Keys: `sb_publishable_`/`sb_secret_` (las anon/service_role
@@ -30,19 +33,24 @@ se construye encima. Todo lo que sigue a la línea divisoria describe el agente.
   `supabase/schema.sql` (idempotente, se manda entero) y devolver URL + publishable key. **No** devuelve
   la key secreta ni crea usuarios: la secreta la pega el usuario y el operador se crea con
   `scripts/create_operator.py <email>`.
-- Dos `.env`: el de la raíz (agente: `SUPABASE_SECRET_KEY`, Twilio, `PUBLIC_BASE_URL`) y `web/.env`
-  (panel: `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_AGENT_URL`). Nunca la key secreta en `web/.env`.
+- `/setup` (`.claude/commands/setup.md`) es el setup guiado de punta a punta; `.claude/settings.json`
+  pre-aprueba sus comandos de sólo lectura. Si cambia el flujo (scripts, variables, pasos), actualizalo.
+- Un solo `.env`, el de la raíz. No existe `web/.env`.
 - ngrok gratis tiene dominio fijo: `PUBLIC_BASE_URL` y el webhook de Twilio se configuran una vez. El
-  webhook del sandbox de WhatsApp sólo se cambia en la consola de Twilio; el de un sender propio, por API.
+  webhook del sandbox de WhatsApp sólo se cambia en la consola de Twilio; el de un sender propio, con
+  `scripts/twilio_webhook.py --set` (Senders API v2).
 - `AGENT_BACKEND=cli` es sólo para desarrollo local (términos de Anthropic). En un servidor, `messages_api`.
-- No hay `/setup` todavía. Las guías del setup no pueden ir en `.claude/skills/`: está gitignored y
-  `scripts/sync_skills.py` borra esa carpeta entera; van en `.claude/commands/`.
+- Las guías de Claude Code no pueden ir en `.claude/skills/`: está gitignored y `scripts/sync_skills.py`
+  borra esa carpeta entera; van en `.claude/commands/`.
+- Deploy: `Dockerfile` (una imagen: build del panel + agente, `AGENT_BACKEND=messages_api`, un solo
+  proceso uvicorn). Instalación editable a propósito: `skills/` y `.env` se resuelven desde la raíz del
+  repo. Destino documentado: Hostinger con EasyPanel.
 
 ### Restricciones
 
 - API oficial de WhatsApp vía Twilio. Nada de APIs no oficiales ni Chatwoot.
-- El panel se despliega en Vercel leyendo Supabase; sin VPS para el panel. El agente sigue donde ya corre.
-- La service key de Supabase nunca llega al navegador. El panel tiene login (son chats de clientes).
+- El panel lo sirve el agente; no hay un servidor aparte para la bandeja.
+- La key secreta de Supabase nunca llega al navegador. El panel tiene login (son chats de clientes).
 - Los mensajes salientes se mandan por Twilio desde el servidor, nunca desde el navegador.
 - Fuera de la ventana de 24 h solo se pueden mandar templates.
 
@@ -85,9 +93,11 @@ pytest                              # no credentials needed
 ruff check .
 python scripts/sync_skills.py       # after editing any SKILL.md
 python scripts/create_operator.py <email>   # panel operator (Auth user + operators row)
-uvicorn whatsapp_skills.main:app --reload --port 8000
-cd web && npm run dev                # panel; needs web/.env (see web/.env.example)
-cd web && npm run build              # type-check + build (Vercel root dir: web/)
+python scripts/twilio_webhook.py [--set]    # show / point the WhatsApp sender webhook
+uvicorn whatsapp_skills.main:app --reload --port 8000   # also serves the panel at /
+cd web && npm run build              # type-check + build to web/dist (served by the agent)
+cd web && npm run dev                # :5173 with hot reload, proxies to the agent on :8000
+docker compose up --build            # production image on :8000
 ```
 
 `tests/test_resilience.py::test_half_open_deja_pasar_una_sola_sonda` is timing-dependent and

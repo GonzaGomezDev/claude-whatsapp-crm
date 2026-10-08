@@ -16,3 +16,4 @@ build/
 # Guion del video, no se publica
 Largo - *.md
 CLAUDE.local.md
+.claude/settings.local.json
