@@ -113,10 +113,13 @@ def _build_signature(schema: dict[str, Any]) -> tuple[inspect.Signature, dict[st
 def _make_handler(tool: SkillTool, registry: SkillRegistry, ctx: SkillContext) -> Any:
     """Envuelve una SkillTool en una función que el SDK de MCP sepa introspeccionar."""
 
+    required = set(tool.input_schema.get("required", []))
+
     async def handler(**kwargs: Any) -> str:
         # Los opcionales que no vinieron llegan como None por el default de la
-        # firma; los sacamos para que el handler use sus propios defaults.
-        payload = {k: v for k, v in kwargs.items() if v is not None}
+        # firma; los sacamos para que el handler use sus propios defaults. Un
+        # obligatorio nullable (`company: null`) sí se pasa: es un valor.
+        payload = {k: v for k, v in kwargs.items() if v is not None or k in required}
         text, _is_error = await registry.dispatch_json(tool.name, payload, ctx)
         return text
 

@@ -19,7 +19,7 @@ from whatsapp_skills.agent.claude_cli import (
     ClaudeCLIBackend,
     _usage_from,
 )
-from whatsapp_skills.agent.mcp_server import _build_signature, build_server
+from whatsapp_skills.agent.mcp_server import _build_signature, _make_handler, build_server
 from whatsapp_skills.agent.messages_api import MessagesAPIBackend
 from whatsapp_skills.agent.prompt import cli_system_prompt, system_blocks
 from whatsapp_skills.skills.base import SkillContext
@@ -237,6 +237,20 @@ def test_los_obligatorios_van_antes_que_los_opcionales_en_la_firma():
     )
     nombres = list(signature.parameters)
     assert nombres.index("obligatorio") < nombres.index("opcional")
+
+
+async def test_el_handler_mcp_pasa_el_null_de_un_obligatorio(registry):
+    """`create_client(company=null)` fallaba con "missing argument 'company'"."""
+    recibido: dict[str, Any] = {}
+
+    class Espia:
+        async def dispatch_json(self, name, payload, ctx):
+            recibido.update(payload)
+            return "{}", False
+
+    handler = _make_handler(registry.tools["create_client"], Espia(), None)
+    await handler(phone="+549", name="Martín", company=None)
+    assert recibido == {"phone": "+549", "name": "Martín", "company": None}
 
 
 def test_un_tipo_json_schema_no_soportado_falla_al_arrancar():
