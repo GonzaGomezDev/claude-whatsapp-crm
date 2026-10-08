@@ -10,7 +10,7 @@ mensajes juntos y aunque una skill se caiga.
 
 ```
 [12:49:34 PM] Message from +5491123456789: "Hola, soy Juan Pérez, necesito una cotización para 500 unidades de X"
-[12:49:34 PM] Running Claude (messages_api) with 5 Skills
+[12:49:34 PM] Running Claude (messages_api) with 4 Skills
 [12:49:35 PM] Claude calling: find_client("+5491123456789")
 [12:49:35 PM] Result: { found: false }  (287ms · breaker=closed)
 [12:49:36 PM] Claude calling: create_client("+5491123456789", "Juan Pérez", null)
@@ -106,7 +106,7 @@ skills/knowledge/
 ```
 
 El `SKILL.md` es el formato que lee Claude Code. Corré `python scripts/sync_skills.py`
-y las mismas cinco carpetas funcionan como skills nativas en tu editor.
+y las mismas cuatro carpetas funcionan como skills nativas en tu editor.
 
 ---
 
@@ -171,31 +171,66 @@ significa que el agente está respondiendo **sin ninguna tool**.
 
 ## Setup
 
-Necesitás cuentas en Supabase y Twilio. Con `AGENT_BACKEND=cli` no
-necesitás API key de Anthropic.
+El repo tiene dos piezas que corren por separado:
+
+- **El agente** (`src/`): FastAPI. Recibe el webhook de Twilio, llama a Claude y
+  expone los endpoints del CRM (`/crm/...`) para tomar, devolver y responder chats.
+- **El panel** (`web/`): Vite + React. Es un sitio estático que lee Supabase en
+  vivo y le pide al agente todo lo que escribe.
+
+Necesitás Python 3.11+, Node 20+, [ngrok](https://ngrok.com/download) y cuentas
+en Supabase y Twilio. Con `AGENT_BACKEND=cli` no necesitás API key de Anthropic:
+usa tu sesión de Claude Code.
 
 ### 1. Instalar
 
 ```bash
-git clone <este-repo> && cd claude-whatsapp-skills
+git clone <este-repo> && cd claude-whatsapp-crm
+
+# Agente
 python -m venv .venv
 source .venv/bin/activate       # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 cp .env.example .env
+
+# Panel
+cd web
+npm install
+cp .env.example .env
+cd ..
 ```
 
 ### 2. Supabase
 
 Creá un proyecto, abrí el **SQL Editor** y pegá `supabase/schema.sql` entero.
-Crea las tablas, la función de búsqueda `search_knowledge` y tres documentos
-de ejemplo en la knowledge base.
+Crea las tablas (incluidas `conversations` y `operators` del CRM), la función de
+búsqueda `search_knowledge`, las políticas de RLS, la publicación de Realtime y
+tres documentos de ejemplo en la knowledge base. Es idempotente: si actualizás el
+repo, volvé a correrlo.
 
-En *Settings → API* copiá la URL y la **`service_role`** key (no la `anon`: el
-agente escribe en tablas con RLS activo).
+En *Settings → API* copiá la URL y las dos keys. Cada una va a un lugar distinto:
 
 ```bash
+# .env (agente): la service_role, porque escribe en tablas con RLS activo
 SUPABASE_URL=https://xxxx.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
+
+# web/.env (panel): la anon, NUNCA la service_role. Va al navegador.
+VITE_SUPABASE_URL=https://xxxx.supabase.co
+VITE_SUPABASE_ANON_KEY=eyJ...
+```
+
+**Crear el operador.** Son chats de clientes: el panel sólo deja entrar a los
+usuarios cargados en `operators`.
+
+1. *Authentication → Users → Add user*: email y contraseña.
+2. *Authentication → Sign In / Providers*: apagá **Allow new users to sign up**,
+   así nadie se crea una cuenta solo.
+3. En el SQL Editor:
+
+```sql
+insert into public.operators (user_id)
+select id from auth.users where email = 'vos@tuempresa.com';
 ```
 
 ### 3. Twilio
@@ -209,30 +244,78 @@ TWILIO_AUTH_TOKEN=...
 TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
 ```
 
-### 4. Exponer el webhook
+### 4. Levantar el agente
+
+Dos terminales, con el virtualenv activado:
 
 ```bash
-python scripts/sync_skills.py            # sólo si vas a usar AGENT_BACKEND=cli
-uvicorn whatsapp_skills.main:app --port 8000
-ngrok http 8000                          # en otra terminal
+# Terminal 1
+python scripts/sync_skills.py            # sólo si usás AGENT_BACKEND=cli
+uvicorn whatsapp_skills.main:app --reload --port 8000
+
+# Terminal 2
+ngrok http 8000
 ```
 
-Poné la URL de ngrok en `PUBLIC_BASE_URL` y configurá el webhook del sandbox de
-Twilio apuntando a `https://<tu-ngrok>.ngrok-free.app/webhook/whatsapp`.
+Con la URL que te da ngrok:
+
+1. Ponela en `PUBLIC_BASE_URL` del `.env` y reiniciá `uvicorn`.
+2. En la consola de Twilio, configurá el webhook del sandbox ("When a message
+   comes in") en `https://<tu-ngrok>.ngrok-free.app/webhook/whatsapp`, método POST.
+
+Para ver que levantó: `curl http://localhost:8000/health` devuelve el backend,
+el modelo, las skills cargadas (4 skills, 9 tools) y el estado de los circuit breakers.
 
 > La firma de Twilio se calcula sobre la **URL pública exacta**. Si te da 403 en
 > todos los mensajes, es casi seguro que `PUBLIC_BASE_URL` no coincide con lo que
 > configuraste en Twilio: `http` vs `https`, barra final de más, o un subdominio
-> de ngrok viejo.
+> de ngrok viejo. Con ngrok gratis el subdominio cambia en cada arranque.
 
-### 5. Probar
+### 5. Levantar el panel
 
-Escribile al número del sandbox desde tu WhatsApp. Mirá los logs.
+En una tercera terminal:
 
-[`docs/MENSAJES-DE-PRUEBA.md`](docs/MENSAJES-DE-PRUEBA.md) tiene un guion con
-mensajes concretos para cada flujo —router, alta de cliente, los tres casos de
-la knowledge base, dedupe de tickets, escalado, rate limit y circuit breaker—
-con lo que tenés que ver en los logs y el SQL para verificarlo.
+```bash
+cd web
+npm run dev                              # http://localhost:5173
+```
+
+`VITE_AGENT_URL` en `web/.env` apunta al agente. Con los dos corriendo en tu
+máquina, alcanza con `http://localhost:8000`. El agente sólo acepta pedidos del
+origen que diga `CRM_PANEL_ORIGIN` (por defecto `http://localhost:5173`).
+
+### 6. Probar
+
+1. Entrá al panel con el usuario operador.
+2. Escribile al número del sandbox desde tu WhatsApp. La conversación aparece en
+   la bandeja sin refrescar, con la etiqueta **IA**, y el bot contesta.
+3. Pedí hablar con una persona. Cuando el agente escala, la etiqueta pasa a
+   **Pidió humano**.
+4. **Tomar chat.** Escribí otra vez desde el teléfono: el mensaje entra a la
+   bandeja y el bot no contesta.
+5. Respondé desde el panel. El mensaje llega al teléfono. Si el cliente no
+   escribió en las últimas 24 h, el campo se deshabilita y explica por qué.
+6. **Devolver a la IA**, con una nota de lo que acordaste. El bot retoma con esa
+   nota en su contexto.
+
+Los logs del agente muestran cada decisión: el evento `routed` con `route=human`
+cuando el bot se calla y `reply_dropped` si tomaste el chat mientras Claude estaba generando.
+
+### Deploy del panel en Vercel
+
+El panel es estático, no necesita servidor propio. El agente sigue donde ya corre
+(tu máquina con ngrok, o un VPS).
+
+1. En Vercel, importá el repo y poné **Root Directory** en `web`. Vercel detecta
+   Vite solo: build `npm run build`, output `dist`.
+2. Cargá las variables `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` y
+   `VITE_AGENT_URL`. Esta última tiene que ser la URL pública del agente (la de
+   ngrok o la de tu servidor), con `https`.
+3. Con la URL que te da Vercel, poné `CRM_PANEL_ORIGIN=https://tu-panel.vercel.app`
+   en el `.env` del agente y reinicialo.
+
+Las variables `VITE_*` se leen al compilar: si cambiás alguna en Vercel, hacé un
+redeploy.
 
 ### Recibir los escalados
 
@@ -253,8 +336,8 @@ donde apunte `HANDOFF_NOTIFY_URL`. El destino se deduce de la URL:
 tópico, lo ponés en el `.env`, instalás la app y te suscribís. Los tópicos son
 públicos, así que usá un nombre largo y difícil de adivinar.
 
-**Para el video, WhatsApp es más lindo:** el escalado te llega al mismo teléfono
-desde el que estás probando, y se ve en cámara sin cambiar de ventana. La contra
+**Para probar, WhatsApp es lo más cómodo:** el escalado te llega al mismo teléfono
+desde el que estás probando. La contra
 es la ventana de 24 h — tenés que haberle escrito al bot ese día.
 
 Notificar es best-effort: el escalado se guarda en la base **antes** de avisar.
@@ -407,7 +490,7 @@ Cosas que este repo **no** hace, dichas de frente:
 - **El backend `cli` no comparte estado con FastAPI.** El `dispatch` corre dentro
   del subproceso MCP, así que el breaker y el rate limiter viven ahí. Para
   desarrollo da igual; para producción usá `messages_api`.
-- **El prefijo mínimo cacheable ronda los 1024 tokens.** Con cinco descripciones
+- **El prefijo mínimo cacheable ronda los 1024 tokens.** Con cuatro descripciones
   cortas el system prompt puede quedar por debajo y no cachear nada, en silencio.
   Verificalo con `usage.cache_read_input_tokens` antes de dar por hecho el ahorro.
 
@@ -416,11 +499,19 @@ Cosas que este repo **no** hace, dichas de frente:
 ## Comandos
 
 ```bash
-pytest                              # 141 tests, sin credenciales
+# Agente (desde la raíz, con el virtualenv activado)
+pytest                              # sin credenciales
 ruff check .
 python scripts/measure_tokens.py    # requiere ANTHROPIC_API_KEY
 python scripts/sync_skills.py       # skills/ -> .claude/skills/
+python scripts/inbox.py list        # bandeja de consola
 uvicorn whatsapp_skills.main:app --reload --port 8000
+ngrok http 8000
+
+# Panel (desde web/)
+npm run dev                         # http://localhost:5173
+npm run build                       # chequeo de tipos + build a dist/
+npm run preview                     # sirve el build local
 ```
 
 ---
