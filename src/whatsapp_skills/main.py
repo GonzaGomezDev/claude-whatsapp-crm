@@ -90,7 +90,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="claude-whatsapp-skills",
+    title="claude-whatsapp-crm",
     description="Agente de WhatsApp sobre Claude Agent Skills.",
     version="0.1.0",
     lifespan=lifespan,

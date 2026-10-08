@@ -1,7 +1,7 @@
 [project]
 name = "claude-whatsapp-crm"
 version = "0.1.0"
-description = "Agente de WhatsApp construido sobre Claude Agent Skills: 4 skills coordinadas, dos backends intercambiables."
+description = "CRM para WhatsApp: la IA atiende con Claude Agent Skills y una persona puede tomar el chat."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

@@ -1,171 +1,79 @@
-# claude-whatsapp-skills
+# claude-whatsapp-crm
 
-Un agente de WhatsApp construido sobre **Claude Agent Skills**: cuatro skills
-coordinadas —clientes, tickets, knowledge base y escalado a humano— con
-circuit breaker, rate limiting por tool y logging estructurado.
+Un CRM para WhatsApp donde la IA atiende sola y una persona puede meterse cuando
+hace falta. Cuando tomás un chat, **el bot se calla de verdad**: no sigue
+contestando por atrás mientras hablás vos.
 
-No es un prototipo. Es la estructura que necesitás cuando el agente tiene que
-seguir respondiendo aunque Supabase se ponga lento, aunque entren cincuenta
-mensajes juntos y aunque una skill se caiga.
+- **Bandeja en vivo** con todas las conversaciones, sin refrescar.
+- **Estado por conversación**: IA, pidió humano (el agente escaló) o humano.
+- **Tomar chat**: el bot deja de contestar en esa conversación. Los mensajes del
+  cliente siguen entrando a la bandeja.
+- **Responder desde el panel**, respetando la ventana de 24 h de WhatsApp.
+- **Devolver a la IA** con una nota de lo que acordaste, para que el bot no te
+  contradiga.
 
-```
-[12:49:34 PM] Message from +5491123456789: "Hola, soy Juan Pérez, necesito una cotización para 500 unidades de X"
-[12:49:34 PM] Running Claude (messages_api) with 4 Skills
-[12:49:35 PM] Claude calling: find_client("+5491123456789")
-[12:49:35 PM] Result: { found: false }  (287ms · breaker=closed)
-[12:49:36 PM] Claude calling: create_client("+5491123456789", "Juan Pérez", null)
-[12:49:36 PM] Claude calling: knowledge_search("cotización producto X unidades", 5)
-[12:49:36 PM] Result: { count: 2, top_confidence: 0.412, ... }  (194ms · breaker=closed)
-[12:49:37 PM] Claude calling: create_ticket(..., "quotation", "normal", ...)
-[12:49:39 PM] Claude response: "Hola Juan, ..."  (in=4821 · out=180 · cache_read=3902)
-```
+Usa la **API oficial de WhatsApp** a través de Twilio, no una API no oficial que
+te puede costar el número. El panel es un sitio estático (Vercel o cualquier
+hosting): no hay que instalar Chatwoot ni mantener un servidor para la bandeja.
 
----
-
-## Antes que nada: Tools vs Skills, sin marketing
-
-Vas a leer en muchos lados que "empaquetar cinco tools en una skill baja el
-token overhead". Dicho así, es falso. Agrupar archivos en carpetas no cambia
-nada de lo que se manda por la red.
-
-Lo que **sí** baja el costo son dos cosas concretas, y este repo hace las dos:
-
-1. **Sacar la prosa de los schemas.** Las descripciones de las tools se pagan en
-   cada request. Las guías largas —cuándo usar cada tool, en qué orden, qué
-   hacer si falla— van en el `SKILL.md`, que se carga a demanda con la tool
-   `load_skill_guide`. Eso es *progressive disclosure*, y es de lo que hablan de
-   verdad los Agent Skills.
-
-2. **Diferir las definiciones.** Con `defer_loading: true` más el server tool
-   `tool_search`, Claude descubre las tools que necesita en vez de recibirlas
-   todas de entrada.
-
-Y como son afirmaciones sobre tokens, se miden:
-
-```bash
-python scripts/measure_tokens.py
-```
-
-Compara cuatro configuraciones con `count_tokens` sobre el mismo mensaje y te
-imprime la diferencia. Corrélo antes de creerle a nadie —incluido este README.
-
-> Con 9 tools el ahorro por diferir todavía es moderado. La brecha crece con el
-> tamaño del tool set: a las 40 o 50 tools es la diferencia entre que entre o no
-> entre en presupuesto.
-
-Lo que las Skills sí te dan desde el minuto cero, sin discusión: **separación de
-responsabilidades**. Cada skill tiene su dominio, su manejo de errores y su
-presupuesto de rate limit. Cuando una se cae, las otras cuatro siguen.
+Está construido arriba de
+[claude-whatsapp-chatbot-skills](https://github.com/GonzaGomezDev/claude-whatsapp-chatbot-skills),
+un agente de atención con Claude Agent Skills. Cómo funciona el agente por dentro
+está más abajo, en [El agente por dentro](#el-agente-por-dentro).
 
 ---
 
-## Arquitectura
+## Cómo funciona
 
 ```
-  WhatsApp
-     │
-     ▼
-┌─────────────────────────────────────────────────────────────┐
-│ Capa 1  webhook.py     Twilio entrante + validación de firma │
-│                        Responde 200, trabaja aparte         │
-├─────────────────────────────────────────────────────────────┤
-│ Capa 2  router.py      ¿esto necesita el modelo? (µs)        │
-├─────────────────────────────────────────────────────────────┤
-│ Capa 3  context.py     Cliente + últimos 10 msgs + tickets   │
-├─────────────────────────────────────────────────────────────┤
-│ Capa 4  agent/         AgentBackend                          │
-│                          ├─ messages_api.py  (producción)    │
-│                          └─ claude_cli.py    (dev local)     │
-│                        ambos → skills/registry.dispatch      │
-├─────────────────────────────────────────────────────────────┤
-│ Capa 5  twilio_client  Respuesta de vuelta por la REST API   │
-├─────────────────────────────────────────────────────────────┤
-│ Capa 6  observability  Latencia, breaker, tokens, errores    │
-└─────────────────────────────────────────────────────────────┘
+ Cliente (WhatsApp)
+        │
+        ▼
+     Twilio ──► webhook ──► ¿status = human? ── sí ──► se guarda, el bot no contesta
+                                   │
+                                   no
+                                   ▼
+                            Claude + skills
+                                   │
+                                   ▼
+                   ¿sigue en bot? (2da lectura) ── sí ──► Twilio ──► Cliente
+
+ Supabase (conversations, messages) ── Realtime ──► Panel en web/ (operador)
+        ▲                                                │
+        └── /crm/take · /crm/return · /crm/reply ───────┘
+            el agente escribe con la service key
 ```
 
-Detalles de cada capa y por qué está donde está: [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
+**El estado vive en la base, no en el panel.** La tabla `conversations` tiene una
+fila por teléfono con `status` (`bot`, `needs_human` o `human`). El que tiene que
+leerlo es el webhook, antes de llamar a Claude: si una persona tomó el chat, el
+mensaje se guarda y no se llama al agente. Tampoco salen las respuestas
+automáticas (el "de nada" a un "gracias").
 
-### Las 4 skills
+**Se lee dos veces.** El webhook contesta 200 a Twilio y procesa en segundo plano,
+y Claude tarda unos segundos. Si tomás el chat justo mientras Claude está
+generando, la primera lectura ya pasó. Por eso el estado se vuelve a leer justo
+antes de enviar: si cambió a `human`, la respuesta del bot no sale (queda en los
+logs como `reply_dropped`).
 
-| Skill | Tools | Qué resuelve |
-|---|---|---|
-| `client-management` | `find_client`, `create_client`, `update_client` | Quién está escribiendo |
-| `ticketing` | `create_ticket`, `find_open_tickets`, `update_ticket_status` | Lo que el equipo tiene que hacer |
-| `knowledge` | `knowledge_search` | Precios, plazos, políticas |
-| `human-handoff` | `escalate_to_human` | La salida de emergencia |
+**El panel sólo lee.** Usa la anon key de Supabase con login, y las políticas de
+RLS sólo dejan leer a los usuarios cargados en la tabla `operators`. Todo lo que
+escribe (tomar, devolver, responder) pasa por el agente, que es el único que
+tiene la service key y las credenciales de Twilio. Nada de eso llega al
+navegador.
 
-Más la tool built-in `load_skill_guide`. Total: **9 tools**.
+**Devolver a la IA con contexto.** El bot retoma con los últimos 10 mensajes,
+incluidos los del humano. Además, la nota que dejás al devolver entra a su
+contexto: si prometiste algo, el bot lo sabe.
 
-Cada skill es una carpeta con el formato real de Agent Skills:
+### Cuándo no te conviene
 
-```
-skills/knowledge/
-├── SKILL.md    ← frontmatter (name, description) + la guía
-└── tools.py    ← las funciones, con @skill_tool
-```
-
-El `SKILL.md` es el formato que lee Claude Code. Corré `python scripts/sync_skills.py`
-y las mismas cuatro carpetas funcionan como skills nativas en tu editor.
-
----
-
-## Los dos backends
-
-El agente habla con Claude a través de un `Protocol`. Hay dos implementaciones, y
-las dos ejecutan las tools por el **mismo** `registry.dispatch` —mismo timeout,
-mismo circuit breaker, mismo rate limiter, mismos logs.
-
-```python
-class AgentBackend(Protocol):
-    async def run(self, convo: Conversation, ctx: SkillContext) -> AgentResult: ...
-```
-
-| | `messages_api` | `cli` |
-|---|---|---|
-| Cómo llama a Claude | Messages API, loop agéntico manual | subproceso `claude -p` |
-| Credenciales | `ANTHROPIC_API_KEY` | tu suscripción de Claude Code |
-| `defer_loading` / `tool_search` | sí | no (el loop lo maneja Claude Code) |
-| `count_tokens` | sí | no |
-| Prompt caching controlado | sí | no |
-| Arranque por mensaje | ~0 | 1–3 s (subproceso) |
-| Para qué sirve | **producción y grabar** | **iterar sobre los SKILL.md gratis** |
-
-Se cambia con una variable de entorno:
-
-```bash
-AGENT_BACKEND=cli           # desarrollo, sin API key
-AGENT_BACKEND=messages_api  # producción
-```
-
-El modo `cli` expone las tools a Claude Code por un server MCP
-(`src/whatsapp_skills/agent/mcp_server.py`) que recorre el mismo registry. Las
-firmas de Python se sintetizan desde los JSON Schema, así que **no hay
-definiciones duplicadas**: el registry es la única fuente de verdad, y los tests
-verifican que los dos backends expongan exactamente las mismas tools con los
-mismos `required` y `enum`.
-
-### Aislamiento del backend `cli`
-
-Un mensaje de WhatsApp es input **no confiable**: lo manda cualquiera que tenga
-el número. Claude Code trae ~23 tools propias (`Read`, `Glob`, `Grep`, `Bash`,
-`WebFetch`, `CronCreate`, `SendMessage`…) y **`--allowedTools` no es una lista
-exclusiva**: con `--permission-mode dontAsk` sólo pre-aprueba, no restringe.
-
-Sin cerrar eso, un agente corriendo con `cwd` en la raíz del repo puede leer tu
-`.env`. Tres capas lo evitan:
-
-1. `BLOCKED_BUILTINS` — deny explícito de todas las built-in. El deny gana.
-2. El subproceso corre en un **directorio temporal vacío**, no en el repo.
-3. El evento `system` del stream declara qué tools quedaron activas; si aparece
-   una que no declaramos, se loguea como error. Una deny list a mano se pudre
-   cuando Claude Code agrega tools — esto hace que te enteres el mismo día.
-
-Verificado: la superficie pasó de 35 tools a 12, todas del MCP.
-
-Si en tus logs ves `unexpected_tools_available` o `mcp_server_failed`, paralo y
-mirá eso antes que nada: el primero es un agujero de seguridad, el segundo
-significa que el agente está respondiendo **sin ninguna tool**.
+- **Varias personas atendiendo a la vez.** No hay asignación de chats entre
+  operadores, ni reportes, ni app móvil. Con un equipo de más de dos personas,
+  Chatwoot (incluso la versión Cloud) te ahorra construir eso.
+- **Mensajes fuera de la ventana de 24 h.** El panel no manda plantillas: te
+  avisa que la ventana está cerrada y no deja enviar.
+- **Audios, imágenes, Instagram o Messenger.** Sólo texto por WhatsApp.
 
 ---
 
@@ -393,7 +301,174 @@ todos los circuit breakers.
 
 ---
 
-## Escribir tu propia skill
+## El agente por dentro
+
+El agente que atiende es una copia de
+[claude-whatsapp-chatbot-skills](https://github.com/GonzaGomezDev/claude-whatsapp-chatbot-skills):
+cuatro skills coordinadas (clientes, tickets, knowledge base y escalado a humano)
+con circuit breaker, rate limiting por tool y logging estructurado. Lo que
+sigue explica cómo está armado.
+
+```
+[12:49:34 PM] Message from +5491123456789: "Hola, soy Juan Pérez, necesito una cotización para 500 unidades de X"
+[12:49:34 PM] Running Claude (messages_api) with 4 Skills
+[12:49:35 PM] Claude calling: find_client("+5491123456789")
+[12:49:35 PM] Result: { found: false }  (287ms · breaker=closed)
+[12:49:36 PM] Claude calling: create_client("+5491123456789", "Juan Pérez", null)
+[12:49:36 PM] Claude calling: knowledge_search("cotización producto X unidades", 5)
+[12:49:36 PM] Result: { count: 2, top_confidence: 0.412, ... }  (194ms · breaker=closed)
+[12:49:37 PM] Claude calling: create_ticket(..., "quotation", "normal", ...)
+[12:49:39 PM] Claude response: "Hola Juan, ..."  (in=4821 · out=180 · cache_read=3902)
+```
+
+### Tools vs Skills, sin marketing
+
+Vas a leer en muchos lados que "empaquetar cinco tools en una skill baja el
+token overhead". Dicho así, es falso. Agrupar archivos en carpetas no cambia
+nada de lo que se manda por la red.
+
+Lo que **sí** baja el costo son dos cosas concretas, y este repo hace las dos:
+
+1. **Sacar la prosa de los schemas.** Las descripciones de las tools se pagan en
+   cada request. Las guías largas —cuándo usar cada tool, en qué orden, qué
+   hacer si falla— van en el `SKILL.md`, que se carga a demanda con la tool
+   `load_skill_guide`. Eso es *progressive disclosure*, y es de lo que hablan de
+   verdad los Agent Skills.
+
+2. **Diferir las definiciones.** Con `defer_loading: true` más el server tool
+   `tool_search`, Claude descubre las tools que necesita en vez de recibirlas
+   todas de entrada.
+
+Y como son afirmaciones sobre tokens, se miden:
+
+```bash
+python scripts/measure_tokens.py
+```
+
+Compara cuatro configuraciones con `count_tokens` sobre el mismo mensaje y te
+imprime la diferencia. Corrélo antes de creerle a nadie —incluido este README.
+
+> Con 9 tools el ahorro por diferir todavía es moderado. La brecha crece con el
+> tamaño del tool set: a las 40 o 50 tools es la diferencia entre que entre o no
+> entre en presupuesto.
+
+Lo que las Skills sí te dan desde el minuto cero, sin discusión: **separación de
+responsabilidades**. Cada skill tiene su dominio, su manejo de errores y su
+presupuesto de rate limit. Cuando una se cae, las otras tres siguen.
+
+---
+
+### Arquitectura
+
+```
+  WhatsApp
+     │
+     ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Capa 1  webhook.py     Twilio entrante + validación de firma │
+│                        Responde 200, trabaja aparte         │
+├─────────────────────────────────────────────────────────────┤
+│ Capa 2  router.py      ¿esto necesita el modelo? (µs)        │
+├─────────────────────────────────────────────────────────────┤
+│ Capa 3  context.py     Cliente + últimos 10 msgs + tickets   │
+├─────────────────────────────────────────────────────────────┤
+│ Capa 4  agent/         AgentBackend                          │
+│                          ├─ messages_api.py  (producción)    │
+│                          └─ claude_cli.py    (dev local)     │
+│                        ambos → skills/registry.dispatch      │
+├─────────────────────────────────────────────────────────────┤
+│ Capa 5  twilio_client  Respuesta de vuelta por la REST API   │
+├─────────────────────────────────────────────────────────────┤
+│ Capa 6  observability  Latencia, breaker, tokens, errores    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Detalles de cada capa y por qué está donde está: [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
+
+#### Las 4 skills
+
+| Skill | Tools | Qué resuelve |
+|---|---|---|
+| `client-management` | `find_client`, `create_client`, `update_client` | Quién está escribiendo |
+| `ticketing` | `create_ticket`, `find_open_tickets`, `update_ticket_status` | Lo que el equipo tiene que hacer |
+| `knowledge` | `knowledge_search` | Precios, plazos, políticas |
+| `human-handoff` | `escalate_to_human` | La salida de emergencia |
+
+Más la tool built-in `load_skill_guide`. Total: **9 tools**.
+
+Cada skill es una carpeta con el formato real de Agent Skills:
+
+```
+skills/knowledge/
+├── SKILL.md    ← frontmatter (name, description) + la guía
+└── tools.py    ← las funciones, con @skill_tool
+```
+
+El `SKILL.md` es el formato que lee Claude Code. Corré `python scripts/sync_skills.py`
+y las mismas cuatro carpetas funcionan como skills nativas en tu editor.
+
+---
+
+### Los dos backends
+
+El agente habla con Claude a través de un `Protocol`. Hay dos implementaciones, y
+las dos ejecutan las tools por el **mismo** `registry.dispatch` —mismo timeout,
+mismo circuit breaker, mismo rate limiter, mismos logs.
+
+```python
+class AgentBackend(Protocol):
+    async def run(self, convo: Conversation, ctx: SkillContext) -> AgentResult: ...
+```
+
+| | `messages_api` | `cli` |
+|---|---|---|
+| Cómo llama a Claude | Messages API, loop agéntico manual | subproceso `claude -p` |
+| Credenciales | `ANTHROPIC_API_KEY` | tu suscripción de Claude Code |
+| `defer_loading` / `tool_search` | sí | no (el loop lo maneja Claude Code) |
+| `count_tokens` | sí | no |
+| Prompt caching controlado | sí | no |
+| Arranque por mensaje | ~0 | 1–3 s (subproceso) |
+| Para qué sirve | **producción** | **iterar sobre los SKILL.md gratis** |
+
+Se cambia con una variable de entorno:
+
+```bash
+AGENT_BACKEND=cli           # desarrollo, sin API key
+AGENT_BACKEND=messages_api  # producción
+```
+
+El modo `cli` expone las tools a Claude Code por un server MCP
+(`src/whatsapp_skills/agent/mcp_server.py`) que recorre el mismo registry. Las
+firmas de Python se sintetizan desde los JSON Schema, así que **no hay
+definiciones duplicadas**: el registry es la única fuente de verdad, y los tests
+verifican que los dos backends expongan exactamente las mismas tools con los
+mismos `required` y `enum`.
+
+#### Aislamiento del backend `cli`
+
+Un mensaje de WhatsApp es input **no confiable**: lo manda cualquiera que tenga
+el número. Claude Code trae ~23 tools propias (`Read`, `Glob`, `Grep`, `Bash`,
+`WebFetch`, `CronCreate`, `SendMessage`…) y **`--allowedTools` no es una lista
+exclusiva**: con `--permission-mode dontAsk` sólo pre-aprueba, no restringe.
+
+Sin cerrar eso, un agente corriendo con `cwd` en la raíz del repo puede leer tu
+`.env`. Tres capas lo evitan:
+
+1. `BLOCKED_BUILTINS` — deny explícito de todas las built-in. El deny gana.
+2. El subproceso corre en un **directorio temporal vacío**, no en el repo.
+3. El evento `system` del stream declara qué tools quedaron activas; si aparece
+   una que no declaramos, se loguea como error. Una deny list a mano se pudre
+   cuando Claude Code agrega tools — esto hace que te enteres el mismo día.
+
+Verificado: la superficie pasó de 35 tools a sólo las del MCP.
+
+Si en tus logs ves `unexpected_tools_available` o `mcp_server_failed`, paralo y
+mirá eso antes que nada: el primero es un agujero de seguridad, el segundo
+significa que el agente está respondiendo **sin ninguna tool**.
+
+---
+
+### Escribir tu propia skill
 
 Tres pasos, sin tocar nada del núcleo. La guía completa está en
 [`docs/ESCRIBIR-UNA-SKILL.md`](docs/ESCRIBIR-UNA-SKILL.md).
@@ -448,7 +523,7 @@ exige `strict`, los tests te lo dicen antes que la API.
 
 ---
 
-## Resiliencia
+### Resiliencia
 
 **Circuit breaker por tool.** Tres fallos seguidos y esa tool deja de intentarse
 por 30 segundos. Claude recibe un error explícito con la sugerencia de escalar en
@@ -468,7 +543,7 @@ la respuesta sale por la REST API.
 
 ---
 
-## Límites conocidos
+### Límites conocidos
 
 Cosas que este repo **no** hace, dichas de frente:
 
