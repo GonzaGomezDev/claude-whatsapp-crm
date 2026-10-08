@@ -1,14 +1,33 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { failed, supabase } from '../supabase'
-import { when } from '../lib/types'
+import { BookOpen, Plus, Search } from 'lucide-react'
+import { toast } from 'sonner'
+import { failed, supabase } from '@/supabase'
+import { when } from '@/lib/types'
+import { EmptyState } from '@/components/EmptyState'
+import { Page, PageHeader } from '@/components/PageHeader'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 
 type Doc = { id: string; title: string; source: string | null; content: string; created_at: string }
 type Hit = { id: string; title: string; confidence: number; match_mode: string; matched_terms: number; query_terms: number }
 
 export default function Knowledge() {
-  const [docs, setDocs] = useState<Doc[]>([])
+  const [docs, setDocs] = useState<Doc[] | null>(null)
   const [editing, setEditing] = useState<Doc | 'new' | null>(null)
-  const [error, setError] = useState('')
+  const [deleting, setDeleting] = useState<Doc | null>(null)
 
   const load = useCallback(() => {
     supabase
@@ -16,7 +35,8 @@ export default function Knowledge() {
       .select('id, title, source, content, created_at')
       .order('title')
       .then((result) => {
-        setError(failed(result) ?? '')
+        const err = failed(result)
+        if (err) toast.error(err)
         setDocs(result.data ?? [])
       })
   }, [])
@@ -36,116 +56,175 @@ export default function Knowledge() {
         ? await supabase.from('knowledge_docs').insert(row)
         : await supabase.from('knowledge_docs').update(row).eq('id', (editing as Doc).id)
     const err = failed(result)
-    setError(err ?? '')
-    if (!err) {
-      setEditing(null)
-      load()
-    }
-  }
-
-  async function remove(doc: Doc) {
-    if (!window.confirm(`¿Borrar "${doc.title}"? El bot deja de usarlo.`)) return
-    const err = failed(await supabase.from('knowledge_docs').delete().eq('id', doc.id))
-    setError(err ?? '')
+    if (err) return toast.error(err)
+    toast.success(editing === 'new' ? 'Documento creado. El bot ya lo usa.' : 'Documento guardado.')
     setEditing(null)
     load()
   }
 
+  async function remove() {
+    if (!deleting) return
+    const err = failed(await supabase.from('knowledge_docs').delete().eq('id', deleting.id))
+    if (err) toast.error(err)
+    else toast.success('Documento borrado.')
+    setDeleting(null)
+    setEditing(null)
+    load()
+  }
+
+  const doc = editing === 'new' ? null : editing
+
   return (
-    <div className="page">
-      <div className="toolbar">
-        <h1>Base de conocimiento</h1>
-        <button onClick={() => setEditing('new')}>Nuevo documento</button>
-      </div>
-      <p className="muted">
-        El bot busca acá antes de responder precios, plazos o políticas. Escribí con acentos: la búsqueda en español
-        los necesita para reconocer las palabras.
-      </p>
-      {error && <p className="error">{error}</p>}
+    <Page>
+      <PageHeader
+        title="Base de conocimiento"
+        description="Lo que el bot consulta antes de responder precios, plazos o políticas."
+        actions={
+          <Button onClick={() => setEditing('new')}>
+            <Plus /> Nuevo documento
+          </Button>
+        }
+      />
 
       <SearchTest />
 
-      {editing && (
-        <form className="card fields" onSubmit={save} key={editing === 'new' ? 'new' : editing.id}>
-          <label>
-            Título <input name="title" defaultValue={editing === 'new' ? '' : editing.title} required />
-          </label>
-          <label>
-            Fuente <input name="source" defaultValue={editing === 'new' ? '' : editing.source ?? ''} placeholder="precios_2026.pdf" />
-          </label>
-          <label>
-            Contenido
-            <textarea name="content" rows={10} defaultValue={editing === 'new' ? '' : editing.content} required />
-          </label>
-          <div>
-            <button>Guardar</button>{' '}
-            <button type="button" className="link" onClick={() => setEditing(null)}>Cancelar</button>
-            {editing !== 'new' && (
-              <button type="button" className="link danger" onClick={() => remove(editing)}>Borrar</button>
-            )}
-          </div>
-        </form>
-      )}
+      <Card className="overflow-hidden p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="pl-4">Título</TableHead>
+              <TableHead>Fuente</TableHead>
+              <TableHead className="text-right">Largo</TableHead>
+              <TableHead className="pr-4">Creado</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {(docs ?? []).map((d) => (
+              <TableRow key={d.id} className="cursor-pointer" onClick={() => setEditing(d)}>
+                <TableCell className="pl-4 font-medium">{d.title}</TableCell>
+                <TableCell className="text-muted-foreground">{d.source || '—'}</TableCell>
+                <TableCell className="text-right text-muted-foreground tabular-nums">{d.content.length} caracteres</TableCell>
+                <TableCell className="pr-4 text-muted-foreground tabular-nums">{when(d.created_at)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+        {docs?.length === 0 && (
+          <EmptyState icon={BookOpen} title="La base está vacía">
+            Sin documentos, el bot responde que no tiene ese dato y escala a una persona.
+          </EmptyState>
+        )}
+      </Card>
 
-      <table className="list clickable">
-        <thead>
-          <tr>
-            <th>Título</th>
-            <th>Fuente</th>
-            <th>Largo</th>
-            <th>Creado</th>
-          </tr>
-        </thead>
-        <tbody>
-          {docs.map((d) => (
-            <tr key={d.id} onClick={() => setEditing(d)}>
-              <td>{d.title}</td>
-              <td>{d.source || '—'}</td>
-              <td>{d.content.length} car.</td>
-              <td>{when(d.created_at)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+      <Sheet open={editing !== null} onOpenChange={(open) => !open && setEditing(null)}>
+        <SheetContent className="w-full data-[side=right]:sm:max-w-2xl">
+          <form key={doc?.id ?? 'new'} onSubmit={save} className="flex h-full flex-col">
+            <SheetHeader>
+              <SheetTitle>{doc ? 'Editar documento' : 'Nuevo documento'}</SheetTitle>
+              <SheetDescription>
+                Escribí con acentos: la búsqueda en español los necesita para reconocer las palabras.
+              </SheetDescription>
+            </SheetHeader>
+            <div className="flex min-h-0 flex-1 flex-col gap-4 px-4">
+              <div className="grid gap-1.5">
+                <Label htmlFor="title">Título</Label>
+                <Input id="title" name="title" defaultValue={doc?.title ?? ''} required />
+              </div>
+              <div className="grid gap-1.5">
+                <Label htmlFor="source">Fuente</Label>
+                <Input id="source" name="source" defaultValue={doc?.source ?? ''} placeholder="precios_2026.pdf" />
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col gap-1.5">
+                <Label htmlFor="content">Contenido</Label>
+                <Textarea id="content" name="content" defaultValue={doc?.content ?? ''} className="min-h-64 flex-1" required />
+              </div>
+            </div>
+            <SheetFooter className="flex-row justify-between">
+              {doc ? (
+                <Button type="button" variant="destructive" onClick={() => setDeleting(doc)}>
+                  Borrar
+                </Button>
+              ) : (
+                <span />
+              )}
+              <div className="flex gap-2">
+                <Button type="button" variant="ghost" onClick={() => setEditing(null)}>
+                  Cancelar
+                </Button>
+                <Button>{doc ? 'Guardar cambios' : 'Crear documento'}</Button>
+              </div>
+            </SheetFooter>
+          </form>
+        </SheetContent>
+      </Sheet>
+
+      <Dialog open={deleting !== null} onOpenChange={(open) => !open && setDeleting(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>¿Borrar "{deleting?.title}"?</DialogTitle>
+            <DialogDescription>El bot deja de usarlo desde la próxima respuesta. No se puede deshacer.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleting(null)}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={remove}>
+              Borrar documento
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Page>
   )
 }
 
 /** La misma búsqueda que usa el bot (RPC search_knowledge), para ver qué encontraría. */
 function SearchTest() {
   const [hits, setHits] = useState<Hit[] | null>(null)
-  const [error, setError] = useState('')
 
   async function search(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     const query = String(new FormData(e.currentTarget).get('q')).trim()
     if (!query) return
     const result = await supabase.rpc('search_knowledge', { query_text: query, match_limit: 5 })
-    setError(failed(result) ?? '')
+    const err = failed(result)
+    if (err) return toast.error(err)
     setHits(result.data ?? [])
   }
 
   return (
-    <section className="card">
-      <form className="row-form" onSubmit={search}>
-        <input name="q" placeholder="Probá una pregunta de un cliente: ¿cuánto sale el producto X?" />
-        <button>Probar búsqueda</button>
-      </form>
-      {error && <p className="error">{error}</p>}
-      {hits && (
-        <ul className="plain">
-          {hits.length === 0 && <li className="muted">Nada: el bot respondería que no tiene ese dato.</li>}
-          {hits.map((h) => (
-            <li key={h.id}>
-              {h.title}{' '}
-              <span className="muted">
-                · confianza {h.confidence.toFixed(2)} · {h.matched_terms}/{h.query_terms} términos ·{' '}
-                {h.match_mode === 'all_terms' ? 'todos' : 'alguno'}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </section>
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Probar como el bot</CardTitle>
+        <CardDescription>Escribí una pregunta como la haría un cliente y mirá qué documentos encontraría.</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <form className="flex gap-2" onSubmit={search}>
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+            <Input name="q" className="pl-8" placeholder="¿Cuánto sale el producto X por 500 unidades?" aria-label="Pregunta de prueba" />
+          </div>
+          <Button variant="outline">Buscar</Button>
+        </form>
+        {hits && hits.length === 0 && (
+          <p className="text-sm text-muted-foreground">Nada. El bot respondería que no tiene ese dato.</p>
+        )}
+        {hits && hits.length > 0 && (
+          <ul className="divide-y rounded-md border">
+            {hits.map((h) => (
+              <li key={h.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                <span className="flex-1 font-medium">{h.title}</span>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {h.matched_terms} de {h.query_terms} palabras
+                </span>
+                <span className="w-24 text-right text-xs text-muted-foreground tabular-nums">
+                  confianza {h.confidence.toFixed(2)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   )
 }

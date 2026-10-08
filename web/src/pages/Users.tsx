@@ -1,120 +1,226 @@
 import { useState, type FormEvent } from 'react'
-import { agent, failed, supabase } from '../supabase'
-import { useTeam } from '../lib/team'
-import type { Operator, Role } from '../lib/types'
+import { Copy, UserPlus } from 'lucide-react'
+import { toast } from 'sonner'
+import { agent, failed, supabase } from '@/supabase'
+import { useTeam } from '@/lib/team'
+import type { Operator, Role } from '@/lib/types'
+import { InitialsAvatar } from '@/components/InitialsAvatar'
+import { Page, PageHeader } from '@/components/PageHeader'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+
+const ROLE_LABEL: Record<Role, string> = { admin: 'Admin', agent: 'Agente' }
 
 export default function Users() {
   const { me, team, reloadTeam } = useTeam()
-  const [error, setError] = useState('')
-  const [created, setCreated] = useState<{ email: string; password: string | null } | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [creating, setCreating] = useState(false)
 
   async function update(op: Operator, patch: Partial<Pick<Operator, 'role' | 'active' | 'name'>>) {
-    setError('')
     // RLS: sólo un admin puede actualizar operators, y sólo name/role/active (grants de columna).
     const err = failed(await supabase.from('operators').update(patch).eq('user_id', op.user_id))
-    if (err) setError(err.includes('admin activo') ? 'Tiene que quedar al menos un admin activo.' : err)
+    if (err) toast.error(err.includes('admin activo') ? 'Tiene que quedar al menos un admin activo.' : err)
     reloadTeam()
   }
 
+  return (
+    <Page>
+      <PageHeader
+        title="Usuarios"
+        description="Los agentes atienden la bandeja, los clientes y los tickets. Los admins además gestionan el equipo y la base de conocimiento."
+        actions={
+          <Button onClick={() => setCreating(true)}>
+            <UserPlus /> Nuevo usuario
+          </Button>
+        }
+      />
+
+      <Card className="overflow-hidden p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="pl-4">Persona</TableHead>
+              <TableHead className="w-40">Rol</TableHead>
+              <TableHead className="w-40 pr-4">Acceso</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {team.map((op) => (
+              <TableRow key={op.user_id} className={op.active ? '' : 'opacity-60'}>
+                <TableCell className="pl-4">
+                  <div className="flex items-center gap-3">
+                    <InitialsAvatar name={op.name || op.email} className="size-8" />
+                    <div className="min-w-0">
+                      <Input
+                        defaultValue={op.name ?? ''}
+                        placeholder="Sin nombre"
+                        aria-label={`Nombre de ${op.email}`}
+                        className="h-7 border-transparent px-1.5 font-medium shadow-none hover:border-input focus-visible:border-ring"
+                        onBlur={(e) => e.target.value !== (op.name ?? '') && update(op, { name: e.target.value })}
+                      />
+                      <p className="px-1.5 text-xs text-muted-foreground">
+                        {op.email}
+                        {op.user_id === me.user_id && ' (vos)'}
+                      </p>
+                    </div>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <Select value={op.role} onValueChange={(v) => update(op, { role: v as Role })}>
+                    <SelectTrigger size="sm" className="w-32" aria-label={`Rol de ${op.email}`}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="agent">{ROLE_LABEL.agent}</SelectItem>
+                      <SelectItem value="admin">{ROLE_LABEL.admin}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </TableCell>
+                <TableCell className="pr-4">
+                  <Label className="flex items-center gap-2 font-normal">
+                    <Checkbox
+                      checked={op.active}
+                      disabled={op.user_id === me.user_id}
+                      onCheckedChange={(v) => update(op, { active: v === true })}
+                    />
+                    {op.active ? 'Activo' : 'Desactivado'}
+                  </Label>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
+      <p className="text-sm text-muted-foreground">
+        Un usuario desactivado no puede entrar al panel ni usar la API del CRM. No podés desactivarte a vos mismo.
+      </p>
+
+      <NewUserDialog open={creating} onOpenChange={setCreating} onCreated={reloadTeam} />
+    </Page>
+  )
+}
+
+function NewUserDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreated: () => void
+}) {
+  const [role, setRole] = useState<Role>('agent')
+  const [busy, setBusy] = useState(false)
+  const [created, setCreated] = useState<{ email: string; password: string | null } | null>(null)
+
   async function create(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    const form = e.currentTarget
-    const data = new FormData(form)
+    const data = new FormData(e.currentTarget)
     const email = String(data.get('email')).trim()
     setBusy(true)
-    setError('')
     try {
       const res = await agent<{ password: string | null }>('/admin/operators', {
         email,
         name: String(data.get('name')).trim(),
-        role: String(data.get('role')) as Role,
+        role,
       })
       setCreated({ email, password: res.password })
-      form.reset()
-      reloadTeam()
+      onCreated()
     } catch (err) {
-      setError((err as Error).message)
+      toast.error((err as Error).message)
     } finally {
       setBusy(false)
     }
   }
 
+  function close(next: boolean) {
+    onOpenChange(next)
+    if (!next) {
+      setCreated(null)
+      setRole('agent')
+    }
+  }
+
   return (
-    <div className="page">
-      <h1>Usuarios</h1>
-      {error && <p className="error">{error}</p>}
-
-      <form className="card row-form" onSubmit={create}>
-        <input name="email" type="email" placeholder="Email" required />
-        <input name="name" placeholder="Nombre" />
-        <select name="role" defaultValue="agent">
-          <option value="agent">Agente</option>
-          <option value="admin">Admin</option>
-        </select>
-        <button disabled={busy}>Dar de alta</button>
-      </form>
-
-      {created && (
-        <p className="card notice">
-          {created.password ? (
-            <>
-              Usuario <strong>{created.email}</strong> creado. Contraseña: <code>{created.password}</code>. Pasásela
-              por un canal seguro: no se vuelve a mostrar.
-            </>
-          ) : (
-            <>
-              <strong>{created.email}</strong> ya tenía cuenta: quedó como operador con su contraseña de siempre.
-            </>
-          )}
-        </p>
-      )}
-
-      <table className="list">
-        <thead>
-          <tr>
-            <th>Nombre</th>
-            <th>Email</th>
-            <th>Rol</th>
-            <th>Estado</th>
-          </tr>
-        </thead>
-        <tbody>
-          {team.map((op) => (
-            <tr key={op.user_id} className={op.active ? '' : 'inactive'}>
-              <td>
-                <input
-                  defaultValue={op.name ?? ''}
-                  placeholder="(sin nombre)"
-                  onBlur={(e) => e.target.value !== (op.name ?? '') && update(op, { name: e.target.value })}
-                />
-              </td>
-              <td>{op.email}</td>
-              <td>
-                <select value={op.role} onChange={(e) => update(op, { role: e.target.value as Role })}>
-                  <option value="agent">Agente</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </td>
-              <td>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={op.active}
-                    disabled={op.user_id === me.user_id}
-                    onChange={(e) => update(op, { active: e.target.checked })}
-                  />
-                  {op.active ? 'Activo' : 'Desactivado'}
-                </label>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <p className="muted">
-        Un usuario desactivado no puede entrar al panel ni usar la API del CRM. Agentes: bandeja, clientes y
-        tickets. Admins: además, usuarios y base de conocimiento.
-      </p>
-    </div>
+    <Dialog open={open} onOpenChange={close}>
+      <DialogContent>
+        {created ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Usuario creado</DialogTitle>
+              <DialogDescription>
+                {created.password
+                  ? 'Pasale esta contraseña por un canal seguro. No se vuelve a mostrar.'
+                  : `${created.email} ya tenía cuenta: quedó como operador con su contraseña de siempre.`}
+              </DialogDescription>
+            </DialogHeader>
+            {created.password && (
+              <div className="grid gap-1.5">
+                <Label>Contraseña de {created.email}</Label>
+                <div className="flex gap-2">
+                  <Input readOnly value={created.password} className="font-mono" onFocus={(e) => e.target.select()} />
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="Copiar contraseña"
+                    onClick={() => navigator.clipboard.writeText(created.password!).then(() => toast.success('Contraseña copiada.'))}
+                  >
+                    <Copy />
+                  </Button>
+                </div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button onClick={() => close(false)}>Listo</Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <form onSubmit={create} className="grid gap-4">
+            <DialogHeader>
+              <DialogTitle>Nuevo usuario</DialogTitle>
+              <DialogDescription>Le generamos una contraseña que vas a ver una sola vez.</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-1.5">
+              <Label htmlFor="new-email">Email</Label>
+              <Input id="new-email" name="email" type="email" required autoFocus />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="new-name">Nombre</Label>
+              <Input id="new-name" name="name" placeholder="Como lo va a ver el equipo" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label>Rol</Label>
+              <Select value={role} onValueChange={(v) => setRole(v as Role)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="agent">Agente: bandeja, clientes y tickets</SelectItem>
+                  <SelectItem value="admin">Admin: además, usuarios y conocimiento</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => close(false)}>
+                Cancelar
+              </Button>
+              <Button disabled={busy}>Crear usuario</Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }
