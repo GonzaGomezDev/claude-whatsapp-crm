@@ -468,3 +468,37 @@ def test_el_usage_del_cli_reporta_costo():
 def test_agent_result_expone_las_tools_usadas():
     result = AgentResult(reply_text="ok", usage=Usage())
     assert result.used_tools == []
+
+
+# ── complete(): texto sin tools para el CRM ─────────────────────────────────
+
+
+def test_complete_del_cli_no_tiene_tools_ni_mcp(registry):
+    """complete() recibe historial de clientes: input no confiable. Tiene que
+    quedar tan cerrado como run(), o más."""
+    argv = ClaudeCLIBackend(registry)._complete_argv("sistema")
+
+    assert argv[argv.index("--tools") + 1] == ""
+    assert set(argv[argv.index("--disallowedTools") + 1].split(",")) == set(BLOCKED_BUILTINS)
+    assert json.loads(argv[argv.index("--mcp-config") + 1]) == {"mcpServers": {}}
+    assert "--strict-mcp-config" in argv
+    assert "--allowedTools" not in argv
+    assert argv[argv.index("--permission-mode") + 1] == "dontAsk"
+
+
+async def test_complete_de_la_api_no_manda_tools(registry):
+    api = MessagesAPIBackend(registry, api_key="sk-test-noop")
+    sent: dict[str, Any] = {}
+
+    class Response:
+        stop_reason = "end_turn"
+        content = [type("Block", (), {"type": "text", "text": "Resumen."})()]
+
+    async def fake_create(**kwargs: Any) -> Any:
+        sent.update(kwargs)
+        return Response()
+
+    api._create = fake_create  # type: ignore[method-assign]
+    assert await api.complete("sistema", "historial") == "Resumen."
+    assert "tools" not in sent
+    assert sent["messages"] == [{"role": "user", "content": "historial"}]

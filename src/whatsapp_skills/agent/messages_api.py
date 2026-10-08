@@ -136,6 +136,15 @@ class MessagesAPIBackend:
             iterations=iteration,
         )
 
+    async def complete(self, system: str, prompt: str) -> str:
+        """Texto sin tools: sin `tools` en el request no hay nada que ejecutar."""
+        response = await self._create(
+            system=system, messages=[{"role": "user", "content": prompt}]
+        )
+        if response.stop_reason == "refusal":
+            raise RuntimeError("Claude no quiso procesar este pedido.")
+        return _extract_text(response)
+
     # ── Ejecución en paralelo ───────────────────────────────────────────────
 
     async def _execute_parallel(

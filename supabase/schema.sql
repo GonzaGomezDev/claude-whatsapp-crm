@@ -344,3 +344,216 @@ begin
     end loop;
 end;
 $do$;
+
+-- ============================================================================
+-- CRM v1: roles, asignación, ficha de cliente, notas, tickets y conocimiento
+-- ============================================================================
+
+-- ── Operadores con rol ──────────────────────────────────────────────────────
+alter table public.operators add column if not exists name   text;
+alter table public.operators add column if not exists email  text;
+alter table public.operators add column if not exists role   text not null default 'agent';
+alter table public.operators add column if not exists active boolean not null default true;
+
+do $do$
+begin
+    if not exists (select 1 from pg_constraint where conname = 'operators_role_check') then
+        alter table public.operators
+            add constraint operators_role_check check (role in ('admin', 'agent'));
+    end if;
+end;
+$do$;
+
+update public.operators o set email = u.email
+  from auth.users u
+ where u.id = o.user_id and o.email is null;
+
+-- Los operadores que existían antes de los roles eran los dueños del CRM: si
+-- todavía no hay ningún admin, pasan a serlo.
+update public.operators set role = 'admin'
+ where not exists (select 1 from public.operators where role = 'admin');
+
+create or replace function public.is_operator()
+returns boolean language sql stable security definer set search_path = public as $fn$
+    select exists (select 1 from public.operators where user_id = auth.uid() and active);
+$fn$;
+
+create or replace function public.is_admin()
+returns boolean language sql stable security definer set search_path = public as $fn$
+    select exists (
+        select 1 from public.operators where user_id = auth.uid() and active and role = 'admin'
+    );
+$fn$;
+
+-- Sin un admin activo nadie puede dar de alta usuarios ni cambiar roles.
+create or replace function public.keep_one_admin()
+returns trigger language plpgsql as $fn$
+begin
+    if exists (select 1 from public.operators)
+       and not exists (select 1 from public.operators where role = 'admin' and active) then
+        raise exception 'Tiene que quedar al menos un admin activo.';
+    end if;
+    return null;
+end;
+$fn$;
+
+drop trigger if exists operators_keep_one_admin on public.operators;
+create trigger operators_keep_one_admin after update or delete on public.operators
+    for each statement execute function public.keep_one_admin();
+
+-- ── Asignación ──────────────────────────────────────────────────────────────
+alter table public.conversations
+    add column if not exists assigned_to uuid references public.operators (user_id) on delete set null;
+alter table public.tickets
+    add column if not exists assigned_to uuid references public.operators (user_id) on delete set null;
+
+-- ── Ficha del cliente ───────────────────────────────────────────────────────
+alter table public.clients add column if not exists email         text;
+alter table public.clients add column if not exists tags          text[] not null default '{}';
+alter table public.clients add column if not exists ai_summary    text;
+alter table public.clients add column if not exists ai_summary_at timestamptz;
+
+-- Notas internas del equipo, de un cliente o de un ticket puntual.
+create table if not exists public.notes (
+    id          uuid primary key default gen_random_uuid(),
+    client_id   uuid not null references public.clients (id) on delete cascade,
+    ticket_id   uuid references public.tickets (id) on delete cascade,
+    author_id   uuid references public.operators (user_id) on delete set null,
+    body        text not null check (length(trim(body)) > 0),
+    created_at  timestamptz not null default now()
+);
+
+create index if not exists notes_client_idx on public.notes (client_id, created_at desc);
+create index if not exists notes_ticket_idx on public.notes (ticket_id, created_at desc);
+alter table public.notes enable row level security;
+
+-- Veces que nos escribió = días distintos con mensajes entrantes. Se cuenta por
+-- teléfono, así entra también lo que llegó antes de que existiera el cliente.
+-- security_invoker: la vista respeta el RLS de quien consulta.
+-- ponytail: agrega sobre messages en cada lectura y corta los días en UTC; con
+-- miles de clientes conviene una tabla de stats mantenida por trigger.
+drop view if exists public.client_overview;
+create view public.client_overview with (security_invoker = true) as
+select c.id, c.phone, c.name, c.company, c.email, c.tags, c.created_at,
+       conv.status, conv.assigned_to,
+       coalesce(m.inbound_count, 0) as inbound_count,
+       coalesce(m.message_count, 0) as message_count,
+       coalesce(m.contact_days, 0)  as contact_days,
+       m.first_contact, m.last_contact,
+       (select count(*) from public.tickets t
+         where t.client_id = c.id
+           and t.status in ('open', 'in_progress', 'waiting_client')) as open_tickets,
+       (select count(*) from public.escalations e where e.client_id = c.id) as escalations
+  from public.clients c
+  left join public.conversations conv on conv.phone = c.phone
+  left join lateral (
+        select count(*) filter (where direction = 'inbound') as inbound_count,
+               count(*) as message_count,
+               count(distinct (created_at at time zone 'UTC')::date)
+                   filter (where direction = 'inbound') as contact_days,
+               min(created_at) filter (where direction = 'inbound') as first_contact,
+               max(created_at) filter (where direction = 'inbound') as last_contact
+          from public.messages
+         where phone = c.phone
+  ) m on true;
+
+-- Al crear un cliente (desde el bot o desde el panel), los mensajes que ese
+-- teléfono mandó antes quedan asociados a él. Sin esto el bot no los ve en su
+-- historial: recent_messages filtra por client_id.
+create or replace function public.attach_client_messages()
+returns trigger language plpgsql security definer set search_path = public as $fn$
+begin
+    update public.messages set client_id = new.id
+     where phone = new.phone and client_id is null;
+    return new;
+end;
+$fn$;
+
+drop trigger if exists clients_attach_messages on public.clients;
+create trigger clients_attach_messages after insert on public.clients
+    for each row execute function public.attach_client_messages();
+
+-- ── Tickets: cerrar uno resuelve sus escalados ──────────────────────────────
+-- Vive en la base para que valga igual desde el bot, el panel y scripts/inbox.py.
+create or replace function public.resolve_ticket_escalations()
+returns trigger language plpgsql security definer set search_path = public as $fn$
+begin
+    update public.escalations set status = 'resolved'
+     where ticket_id = new.id and status in ('pending', 'claimed');
+    return new;
+end;
+$fn$;
+
+drop trigger if exists tickets_resolve_escalations on public.tickets;
+create trigger tickets_resolve_escalations after update of status on public.tickets
+    for each row when (new.status in ('resolved', 'closed') and old.status is distinct from new.status)
+    execute function public.resolve_ticket_escalations();
+
+-- ── Permisos del panel ──────────────────────────────────────────────────────
+-- El panel escribe directo lo que es CRUD de datos. Lo que necesita secretos o
+-- tiene efectos afuera (Twilio, tomar/devolver/asignar, alta de usuarios,
+-- resumen IA) pasa por el agente (crm.py).
+do $do$
+declare t text;
+begin
+    foreach t in array array['tickets', 'notes', 'knowledge_docs', 'operators'] loop
+        execute format('drop policy if exists operators_read on public.%I', t);
+        execute format(
+            'create policy operators_read on public.%I for select to authenticated
+             using (public.is_operator())', t);
+    end loop;
+end;
+$do$;
+
+drop policy if exists operators_insert on public.clients;
+create policy operators_insert on public.clients for insert to authenticated
+    with check (public.is_operator());
+drop policy if exists operators_update on public.clients;
+create policy operators_update on public.clients for update to authenticated
+    using (public.is_operator()) with check (public.is_operator());
+
+drop policy if exists operators_update on public.tickets;
+create policy operators_update on public.tickets for update to authenticated
+    using (public.is_operator()) with check (public.is_operator());
+
+drop policy if exists operators_insert on public.notes;
+create policy operators_insert on public.notes for insert to authenticated
+    with check (public.is_operator() and author_id = auth.uid());
+
+drop policy if exists admins_write on public.knowledge_docs;
+create policy admins_write on public.knowledge_docs for all to authenticated
+    using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists admins_update on public.operators;
+create policy admins_update on public.operators for update to authenticated
+    using (public.is_admin()) with check (public.is_admin());
+
+-- RLS dice QUIÉN puede escribir; los grants de columna dicen QUÉ. Sin esto, un
+-- agente podría cambiarse el rol o pisar el resumen IA desde la consola del
+-- navegador.
+revoke insert, update, delete on public.clients   from anon, authenticated;
+grant insert (phone, name, company, email, tags) on public.clients to authenticated;
+grant update (name, company, email, tags)        on public.clients to authenticated;
+
+revoke insert, update, delete on public.tickets   from anon, authenticated;
+grant update (status, priority, assigned_to) on public.tickets to authenticated;
+
+revoke insert, update, delete on public.operators from anon, authenticated;
+grant update (name, role, active) on public.operators to authenticated;
+
+revoke insert, update, delete on public.notes from anon, authenticated;
+grant insert (client_id, ticket_id, body, author_id) on public.notes to authenticated;
+
+grant select on public.client_overview to authenticated;
+
+-- Realtime para que la lista de tickets se actualice sola.
+do $do$
+begin
+    if not exists (
+        select 1 from pg_publication_tables
+         where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'tickets'
+    ) then
+        alter publication supabase_realtime add table public.tickets;
+    end if;
+end;
+$do$;

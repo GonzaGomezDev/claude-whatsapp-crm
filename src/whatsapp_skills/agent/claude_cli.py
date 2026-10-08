@@ -149,6 +149,56 @@ class ClaudeCLIBackend:
         )
         return result
 
+    async def complete(self, system: str, prompt: str) -> str:
+        """Texto sin tools, con el mismo aislamiento que run().
+
+        El prompt trae historial de clientes (input no confiable): sin tools
+        built-in (`--tools ""` más el deny explícito), sin MCP y en el workspace
+        vacío. Va por stdin: un historial largo no entra en la línea de comando
+        de Windows (32 KB).
+        """
+        async with self._semaphore:
+            process = await asyncio.create_subprocess_exec(
+                *self._complete_argv(system),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=str(self._workspace),
+                env={**os.environ, "LOG_FORMAT": "json"},
+            )
+            try:
+                out, err = await asyncio.wait_for(
+                    process.communicate(prompt.encode("utf-8")), timeout=self.timeout_s
+                )
+            except TimeoutError:
+                process.kill()
+                await process.wait()
+                raise RuntimeError("Claude Code no respondió a tiempo.") from None
+
+        if process.returncode != 0:
+            log.error("cli_complete_failed", returncode=process.returncode,
+                      stderr=err.decode("utf-8", "replace")[-800:])
+            raise RuntimeError("Claude Code devolvió un error.")
+        payload = json.loads(out.decode("utf-8", "replace") or "{}")
+        return (payload.get("result") or "").strip()
+
+    def _complete_argv(self, system: str) -> list[str]:
+        return [
+            self.cli_path,
+            "--print",
+            "--output-format", "json",
+            "--model", self.model,
+            "--effort", "low",
+            "--tools", "",
+            "--disallowedTools", ",".join(BLOCKED_BUILTINS),
+            "--mcp-config", json.dumps({"mcpServers": {}}),
+            "--strict-mcp-config",
+            "--setting-sources", "project",
+            "--system-prompt", system,
+            "--max-budget-usd", str(self.max_budget_usd),
+            "--permission-mode", "dontAsk",
+        ]
+
     # ── Subproceso ──────────────────────────────────────────────────────────
 
     async def _invoke(

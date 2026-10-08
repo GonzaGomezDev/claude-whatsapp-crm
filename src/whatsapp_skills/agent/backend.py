@@ -108,6 +108,14 @@ class AgentBackend(Protocol):
         """Resuelve un turno completo y devuelve qué responderle al cliente."""
         ...
 
+    async def complete(self, system: str, prompt: str) -> str:
+        """Una respuesta de texto, sin tools (ej. resumir un cliente para el CRM).
+
+        El prompt puede traer texto de clientes: es input no confiable y tiene
+        que correr con el mismo aislamiento que run().
+        """
+        ...
+
 
 # Mensaje de último recurso. Si el backend no puede producir texto, el cliente
 # igual recibe algo: el silencio es la peor respuesta posible en WhatsApp.

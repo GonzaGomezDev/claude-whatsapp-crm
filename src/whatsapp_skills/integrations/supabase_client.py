@@ -13,6 +13,7 @@ otro backend, tocás un archivo y las skills siguen andando.
 from __future__ import annotations
 
 import asyncio
+import secrets
 from datetime import UTC, datetime
 from typing import Any
 
@@ -186,18 +187,21 @@ class Database:
         status: str,
         *,
         only_from: str | None = None,
-        handoff_note: str | None = None,
+        **fields: Any,
     ) -> dict[str, Any] | None:
         """Cambia el estado. Con `only_from`, sólo si estaba en ese estado.
 
-        Devuelve la fila actualizada, o None si no había nada que cambiar.
+        `fields` va tal cual al update (handoff_note, assigned_to): pasar
+        `assigned_to=None` lo limpia. Devuelve la fila actualizada, o None si no
+        había nada que cambiar.
         """
 
         def query() -> Any:
-            patch: dict[str, Any] = {"status": status}
-            if handoff_note is not None:
-                patch["handoff_note"] = handoff_note
-            q = self._client.table("conversations").update(patch).eq("phone", phone)
+            q = (
+                self._client.table("conversations")
+                .update({"status": status, **fields})
+                .eq("phone", phone)
+            )
             if only_from:
                 q = q.eq("status", only_from)
             return q.execute()
@@ -205,8 +209,19 @@ class Database:
         rows = await self._run(query)
         return rows[0] if rows else None
 
-    async def operator_id(self, access_token: str) -> str | None:
-        """user_id del operador dueño del token, o None si no es operador."""
+    async def assign_conversation(self, phone: str, user_id: str | None) -> dict[str, Any] | None:
+        rows = await self._run(
+            lambda: self._client.table("conversations")
+            .update({"assigned_to": user_id})
+            .eq("phone", phone)
+            .execute()
+        )
+        return rows[0] if rows else None
+
+    # ── Operadores ──────────────────────────────────────────────────────────
+
+    async def operator_for_token(self, access_token: str) -> dict[str, Any] | None:
+        """El operador activo dueño del token (user_id, role, name), o None."""
         try:
             response = await asyncio.to_thread(self._client.auth.get_user, access_token)
         except Exception:  # noqa: BLE001
@@ -214,14 +229,97 @@ class Database:
         user = getattr(response, "user", None)
         if user is None:
             return None
+        operator = await self.get_operator(user.id)
+        return operator if operator and operator.get("active") else None
+
+    async def get_operator(self, user_id: str) -> dict[str, Any] | None:
         rows = await self._run(
             lambda: self._client.table("operators")
-            .select("user_id")
-            .eq("user_id", user.id)
+            .select("user_id, name, email, role, active")
+            .eq("user_id", user_id)
             .limit(1)
             .execute()
         )
-        return user.id if rows else None
+        return rows[0] if rows else None
+
+    async def create_operator(
+        self, email: str, *, name: str | None = None, role: str = "agent"
+    ) -> tuple[str, str | None]:
+        """Crea el usuario de Auth (si no existe) y lo da de alta como operador.
+
+        Devuelve (user_id, contraseña generada). La contraseña es None si el
+        usuario ya existía en Auth: se mantiene la suya.
+        """
+        admin = self._client.auth.admin
+        user_id = await asyncio.to_thread(_find_auth_user, admin, email)
+        password = None
+        if user_id is None:
+            password = secrets.token_urlsafe(12)
+            created = await asyncio.to_thread(
+                admin.create_user,
+                {"email": email, "password": password, "email_confirm": True},
+            )
+            user_id = created.user.id
+
+        await self._run(
+            lambda: self._client.table("operators")
+            .upsert(
+                {"user_id": user_id, "email": email, "name": name, "role": role, "active": True},
+                on_conflict="user_id",
+            )
+            .execute()
+        )
+        return user_id, password
+
+    # ── Ficha del cliente (CRM) ─────────────────────────────────────────────
+
+    async def client_summary_input(self, client_id: str) -> dict[str, Any] | None:
+        """Lo que lee Claude para resumir un cliente: datos, últimos 200 mensajes,
+        tickets y escalados."""
+        rows = await self._run(
+            lambda: self._client.table("clients").select("*").eq("id", client_id).limit(1).execute()
+        )
+        if not rows:
+            return None
+        client = rows[0]
+        messages, tickets, escalations = await asyncio.gather(
+            self._run(
+                lambda: self._client.table("messages")
+                .select("direction, body, created_at, metadata")
+                .eq("phone", client["phone"])
+                .order("created_at", desc=True)
+                .limit(200)
+                .execute()
+            ),
+            self._run(
+                lambda: self._client.table("tickets")
+                .select("ref, type, status, subject, metadata, created_at")
+                .eq("client_id", client_id)
+                .order("created_at")
+                .execute()
+            ),
+            self._run(
+                lambda: self._client.table("escalations")
+                .select("reason, summary, status, created_at")
+                .eq("client_id", client_id)
+                .order("created_at")
+                .execute()
+            ),
+        )
+        return {
+            "client": client,
+            "messages": list(reversed(messages)),
+            "tickets": tickets,
+            "escalations": escalations,
+        }
+
+    async def save_client_summary(self, client_id: str, summary: str) -> None:
+        await self._run(
+            lambda: self._client.table("clients")
+            .update({"ai_summary": summary, "ai_summary_at": datetime.now(UTC).isoformat()})
+            .eq("id", client_id)
+            .execute()
+        )
 
     # ── Tickets ─────────────────────────────────────────────────────────────
 
@@ -373,3 +471,16 @@ class Database:
             .execute()
         )
         return len(rows or [])
+
+
+def _find_auth_user(admin: Any, email: str) -> str | None:
+    """user_id del usuario de Auth con ese email. La API admin no filtra por email."""
+    page = 1
+    while True:
+        users = admin.list_users(page=page, per_page=200)
+        for user in users:
+            if (user.email or "").lower() == email.lower():
+                return user.id
+        if len(users) < 200:
+            return None
+        page += 1
