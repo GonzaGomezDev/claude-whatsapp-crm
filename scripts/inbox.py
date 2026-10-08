@@ -109,7 +109,7 @@ async def cmd_show(args: argparse.Namespace) -> int:
 
     cliente = ticket.get("clients") or {}
     historial, ultimo = await asyncio.gather(
-        db.recent_messages(cliente["id"], 10) if cliente.get("id") else _empty(),
+        db.recent_messages(cliente["phone"], 10) if cliente.get("phone") else _empty(),
         db.last_inbound_at(cliente["phone"]) if cliente.get("phone") else _none(),
     )
 

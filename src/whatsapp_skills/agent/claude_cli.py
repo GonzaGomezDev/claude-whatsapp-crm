@@ -363,7 +363,9 @@ class ClaudeCLIBackend:
         ]
         if resume:
             argv += ["--resume", resume]
-        argv.append(convo.message)
+        # ponytail: va en la línea de comando (32 KB en Windows). Diez mensajes
+        # entran de sobra; si se agranda HISTORY_LIMIT, pasarlo por stdin como complete().
+        argv.append(convo.as_prompt())
         return argv
 
     def _mcp_config(self) -> dict[str, Any]:

@@ -99,6 +99,23 @@ def test_el_primer_mensaje_siempre_es_del_usuario():
     assert messages == [{"role": "user", "content": "¿me confirmás el precio?"}]
 
 
+def test_el_prompt_del_cli_lleva_el_historial_con_lo_del_operador():
+    """El cli no ve `history` por otro lado: sin esto vuelve a pedir el nombre
+    que el cliente le dio al operador."""
+    convo = Conversation(
+        phone="+549",
+        message="¿horarios?",
+        history=[
+            {"direction": "outbound", "body": "¿Tu nombre?", "metadata": {"source": "operator"}},
+            {"direction": "inbound", "body": "Martin"},
+        ],
+    )
+    prompt = convo.as_prompt()
+    assert "Equipo: ¿Tu nombre?\nCliente: Martin" in prompt
+    assert prompt.endswith("¿horarios?")
+    assert Conversation(phone="+549", message="hola").as_prompt() == "hola"
+
+
 def test_un_historial_que_arranca_con_el_agente_se_recorta():
     convo = Conversation(
         phone="+549",

@@ -57,6 +57,30 @@ class Conversation:
             messages.append({"role": "user", "content": self.message})
         return messages
 
+    def as_prompt(self) -> str:
+        """Historial + mensaje actual en un solo texto, para el backend cli.
+
+        `--resume` no alcanza: la sesión de Claude Code no tiene lo que escribió
+        el operador ni lo que pasó antes de que existiera el cliente.
+        """
+        lines = []
+        for turn in self.history:
+            body = (turn.get("body") or "").strip()
+            if not body:
+                continue
+            if (turn.get("metadata") or {}).get("source") == "operator":
+                author = "Equipo"
+            else:
+                author = "Vos" if turn.get("direction") == "outbound" else "Cliente"
+            lines.append(f"{author}: {body}")
+        if not lines:
+            return self.message
+        return (
+            "Mensajes anteriores de este chat, del más viejo al más nuevo:\n"
+            + "\n".join(lines)
+            + f"\n\nMensaje nuevo del cliente:\n{self.message}"
+        )
+
 
 @dataclass
 class ToolCall:

@@ -24,19 +24,25 @@ HISTORY_LIMIT = 10
 
 
 async def build_conversation(
-    db: Database, phone: str, message: str, handoff_note: str | None = None
+    db: Database,
+    phone: str,
+    message: str,
+    handoff_note: str | None = None,
+    inbound_id: str | None = None,
 ) -> Conversation:
-    """Arma la Conversation. Nunca levanta: sin contexto igual se puede responder."""
-    client = await _safe(db.find_client_by_phone(phone), "find_client_by_phone")
+    """Arma la Conversation. Nunca levanta: sin contexto igual se puede responder.
 
-    if not client:
-        return Conversation(phone=phone, message=message, handoff_note=handoff_note)
-
-    # Historial y tickets no dependen entre sí: van en paralelo.
-    history, tickets = await asyncio.gather(
-        _safe(db.recent_messages(client["id"], HISTORY_LIMIT), "recent_messages"),
-        _safe(db.open_tickets(client["id"]), "open_tickets"),
+    `inbound_id` es el entrante que se está procesando: ya está grabado, pero
+    viaja aparte como `message` y no tiene que repetirse en el historial.
+    """
+    # El historial va por teléfono: un número que todavía no es cliente también
+    # tiene conversación (y lo que le dijo el operador).
+    client, history = await asyncio.gather(
+        _safe(db.find_client_by_phone(phone), "find_client_by_phone"),
+        _safe(db.recent_messages(phone, HISTORY_LIMIT, inbound_id), "recent_messages"),
     )
+
+    tickets = await _safe(db.open_tickets(client["id"]), "open_tickets") if client else None
 
     return Conversation(
         phone=phone,
@@ -44,7 +50,7 @@ async def build_conversation(
         history=history or [],
         client=client,
         open_tickets=tickets or [],
-        session_id=client.get("claude_session_id"),
+        session_id=(client or {}).get("claude_session_id"),
         handoff_note=handoff_note,
     )
 

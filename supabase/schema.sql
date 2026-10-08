@@ -458,8 +458,7 @@ select c.id, c.phone, c.name, c.company, c.email, c.tags, c.created_at,
   ) m on true;
 
 -- Al crear un cliente (desde el bot o desde el panel), los mensajes que ese
--- teléfono mandó antes quedan asociados a él. Sin esto el bot no los ve en su
--- historial: recent_messages filtra por client_id.
+-- teléfono mandó antes quedan asociados a él.
 create or replace function public.attach_client_messages()
 returns trigger language plpgsql security definer set search_path = public as $fn$
 begin

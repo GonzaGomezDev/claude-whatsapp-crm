@@ -21,8 +21,14 @@ class FakeDB:
         self.messages: list[dict[str, Any]] = []
 
     async def record_message(self, **row: Any) -> dict[str, Any]:
-        self.messages.append(row)
-        return {"id": str(len(self.messages)), **row}
+        self.messages.append({"id": str(len(self.messages) + 1), **row})
+        return self.messages[-1]
+
+    async def recent_messages(
+        self, phone: str, limit: int = 10, exclude_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        rows = [m for m in self.messages if m["phone"] == phone and m["id"] != exclude_id]
+        return rows[-limit:]
 
     async def touch_conversation(self, phone: str) -> dict[str, Any]:
         return {"phone": phone, "status": self.status}

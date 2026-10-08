@@ -17,12 +17,20 @@ import secrets
 from datetime import UTC, datetime
 from typing import Any
 
-from supabase import Client, create_client
+import httpx
+from supabase import Client, ClientOptions, create_client
 
 
 class Database:
     def __init__(self, url: str, service_role_key: str) -> None:
-        self._client: Client = create_client(url, service_role_key)
+        # HTTP/1.1 a propósito. El default de supabase-py es un httpx.Client con
+        # http2=True compartido, y lo usamos desde varios threads (`_run` +
+        # gather): el pool HTTP/2 sync se rompe con eso y, cuando Supabase cierra
+        # la conexión ociosa, el request siguiente cae con "Server disconnected".
+        http = httpx.Client(http2=False, follow_redirects=True, timeout=120)
+        self._client: Client = create_client(
+            url, service_role_key, ClientOptions(httpx_client=http)
+        )
 
     # ── Helper ──────────────────────────────────────────────────────────────
 
@@ -132,8 +140,7 @@ class Database:
 
         El webhook graba el entrante ANTES de saber de quién es (necesita el
         insert temprano para la idempotencia por twilio_sid). Sin este backfill
-        el mensaje queda con client_id NULL y `recent_messages` no lo devuelve
-        nunca: el modelo termina viendo sólo sus propias respuestas.
+        el mensaje queda con client_id NULL, suelto del cliente en el CRM.
         """
         await self._run(
             lambda: self._client.table("messages")
@@ -143,15 +150,24 @@ class Database:
             .execute()
         )
 
-    async def recent_messages(self, client_id: str, limit: int = 10) -> list[dict[str, Any]]:
-        rows = await self._run(
-            lambda: self._client.table("messages")
-            .select("direction, body, created_at")
-            .eq("client_id", client_id)
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
+    async def recent_messages(
+        self, phone: str, limit: int = 10, exclude_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Por teléfono, no por cliente: el número que todavía no es cliente
+        también tiene historial (lo que dijo antes, lo que le contestó el equipo).
+        `exclude_id` saca el entrante que se está procesando."""
+
+        def query() -> Any:
+            q = (
+                self._client.table("messages")
+                .select("direction, body, created_at, metadata")
+                .eq("phone", phone)
+            )
+            if exclude_id:
+                q = q.neq("id", exclude_id)
+            return q.order("created_at", desc=True).limit(limit).execute()
+
+        rows = await self._run(query)
         return list(reversed(rows))  # cronológico para armar el historial
 
     # ── Conversaciones (CRM) ────────────────────────────────────────────────
