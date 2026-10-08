@@ -24,6 +24,20 @@ se construye encima. Todo lo que sigue a la línea divisoria describe el agente.
   del breakpoint de cache.
 - `window.py` es la ventana de 24 h, compartida por `crm.py` y `scripts/inbox.py`.
 
+### Setup
+
+- `.mcp.json` trae el MCP oficial de Supabase (OAuth vía `/mcp`). Puede crear el proyecto, aplicar
+  `supabase/schema.sql` (idempotente, se manda entero) y devolver URL + publishable key. **No** devuelve
+  la key secreta ni crea usuarios: la secreta la pega el usuario y el operador se crea con
+  `scripts/create_operator.py <email>`.
+- Dos `.env`: el de la raíz (agente: `SUPABASE_SECRET_KEY`, Twilio, `PUBLIC_BASE_URL`) y `web/.env`
+  (panel: `VITE_SUPABASE_PUBLISHABLE_KEY`, `VITE_AGENT_URL`). Nunca la key secreta en `web/.env`.
+- ngrok gratis tiene dominio fijo: `PUBLIC_BASE_URL` y el webhook de Twilio se configuran una vez. El
+  webhook del sandbox de WhatsApp sólo se cambia en la consola de Twilio; el de un sender propio, por API.
+- `AGENT_BACKEND=cli` es sólo para desarrollo local (términos de Anthropic). En un servidor, `messages_api`.
+- No hay `/setup` todavía. Las guías del setup no pueden ir en `.claude/skills/`: está gitignored y
+  `scripts/sync_skills.py` borra esa carpeta entera; van en `.claude/commands/`.
+
 ### Restricciones
 
 - API oficial de WhatsApp vía Twilio. Nada de APIs no oficiales ni Chatwoot.
@@ -70,6 +84,7 @@ scripts/sync_skills.py    Copies skills/ -> .claude/skills/ for Claude Code
 pytest                              # no credentials needed
 ruff check .
 python scripts/sync_skills.py       # after editing any SKILL.md
+python scripts/create_operator.py <email>   # panel operator (Auth user + operators row)
 uvicorn whatsapp_skills.main:app --reload --port 8000
 cd web && npm run dev                # panel; needs web/.env (see web/.env.example)
 cd web && npm run build              # type-check + build (Vercel root dir: web/)

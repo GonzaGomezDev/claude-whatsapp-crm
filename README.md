@@ -87,8 +87,26 @@ El repo tiene dos piezas que corren por separado:
   vivo y le pide al agente todo lo que escribe.
 
 Necesitás Python 3.11+, Node 20+, [ngrok](https://ngrok.com/download) y cuentas
-en Supabase y Twilio. Con `AGENT_BACKEND=cli` no necesitás API key de Anthropic:
-usa tu sesión de Claude Code.
+en Supabase (alcanza el plan gratis), Twilio y ngrok. Con `AGENT_BACKEND=cli` no
+necesitás API key de Anthropic: usa tu sesión de Claude Code, que tiene que estar
+instalado y logueado. Es para desarrollo local; en un servidor usá `messages_api`
+(ver [Los dos backends](#los-dos-backends)).
+
+### Con Claude Code
+
+El repo trae un `.mcp.json` con el [MCP oficial de Supabase](https://supabase.com/docs/guides/getting-started/mcp).
+Abrí Claude Code en la carpeta del repo, aprobá el server `supabase` cuando lo
+pregunte, corré `/mcp` → `supabase` → **Authenticate** y logueate en el navegador.
+
+Desde ahí Claude puede hacer casi todo el paso 2: crear el proyecto (gratis),
+aplicar `supabase/schema.sql` y escribir la URL y la publishable key en los dos
+`.env`. Lo que el MCP no expone y queda de tu lado:
+
+- **La key secreta** (`sb_secret_...`): copiala de *Project Settings → API Keys*.
+- **Twilio y ngrok**: tus credenciales y el authtoken de ngrok.
+
+El resto de esta sección es el mismo setup paso a paso, por si lo querés hacer a
+mano o entender qué está haciendo Claude.
 
 ### 1. Instalar
 
@@ -110,7 +128,8 @@ cd ..
 
 ### 2. Supabase
 
-Creá un proyecto, abrí el **SQL Editor** y pegá `supabase/schema.sql` entero.
+Creá un proyecto (con el MCP, o desde el dashboard), abrí el **SQL Editor** y
+pegá `supabase/schema.sql` entero.
 Crea las tablas (incluidas `conversations` y `operators` del CRM), la función de
 búsqueda `search_knowledge`, las políticas de RLS, la publicación de Realtime y
 tres documentos de ejemplo en la knowledge base. Es idempotente: si actualizás el
@@ -128,6 +147,10 @@ VITE_SUPABASE_URL=https://xxxx.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```
 
+Si tu proyecto todavía tiene las keys legacy (`anon` / `service_role`), también
+funcionan: `SUPABASE_SERVICE_ROLE_KEY` se acepta como alias. Supabase las retira
+a fines de 2026.
+
 **Crear el operador.** Son chats de clientes: el panel sólo deja entrar a los
 usuarios cargados en `operators`. Con el `.env` del agente completo:
 
@@ -141,13 +164,15 @@ toca nada), pero evita cuentas sueltas.
 
 ### 3. Twilio
 
-Activá el [WhatsApp Sandbox](https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn)
-y mandá el código de unión desde tu teléfono.
+Necesitás un número de WhatsApp en Twilio. Para probar alcanza el
+[WhatsApp Sandbox](https://console.twilio.com/us1/develop/sms/try-it-out/whatsapp-learn):
+mandá el código de unión (`join <código>`) desde tu teléfono. La unión vence a
+los 3 días; después hay que volver a mandarla.
 
 ```bash
 TWILIO_ACCOUNT_SID=AC...
 TWILIO_AUTH_TOKEN=...
-TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+TWILIO_WHATSAPP_FROM=whatsapp:+14155238886   # el sandbox, o tu número propio
 ```
 
 ### 4. Levantar el agente
@@ -159,23 +184,28 @@ Dos terminales, con el virtualenv activado:
 python scripts/sync_skills.py            # sólo si usás AGENT_BACKEND=cli
 uvicorn whatsapp_skills.main:app --reload --port 8000
 
-# Terminal 2
+# Terminal 2 (la primera vez: ngrok config add-authtoken <tu-token>)
 ngrok http 8000
 ```
 
-Con la URL que te da ngrok:
+El plan gratis de ngrok te da un dominio fijo (`<algo>.ngrok-free.app`): es el
+mismo en cada arranque, así que estos dos pasos se hacen una sola vez.
 
-1. Ponela en `PUBLIC_BASE_URL` del `.env` y reiniciá `uvicorn`.
-2. En la consola de Twilio, configurá el webhook del sandbox ("When a message
-   comes in") en `https://<tu-ngrok>.ngrok-free.app/webhook/whatsapp`, método POST.
+1. Poné la URL en `PUBLIC_BASE_URL` del `.env` y reiniciá `uvicorn`.
+2. Apuntá el webhook de Twilio a `https://<tu-dominio>.ngrok-free.app/webhook/whatsapp`,
+   método POST:
+   - **Sandbox:** sólo desde la consola, en *Sandbox settings* → "When a message
+     comes in". No hay API para esto.
+   - **Número propio:** en la configuración del sender de WhatsApp. Ese se puede
+     cambiar también por API (Senders API).
 
 Para ver que levantó: `curl http://localhost:8000/health` devuelve el backend,
 el modelo, las skills cargadas (4 skills, 9 tools) y el estado de los circuit breakers.
 
 > La firma de Twilio se calcula sobre la **URL pública exacta**. Si te da 403 en
 > todos los mensajes, es casi seguro que `PUBLIC_BASE_URL` no coincide con lo que
-> configuraste en Twilio: `http` vs `https`, barra final de más, o un subdominio
-> de ngrok viejo. Con ngrok gratis el subdominio cambia en cada arranque.
+> configuraste en Twilio: `http` vs `https`, barra final de más, o un dominio de
+> ngrok viejo.
 
 ### 5. Levantar el panel
 
@@ -193,7 +223,7 @@ origen que diga `CRM_PANEL_ORIGIN` (por defecto `http://localhost:5173`).
 ### 6. Probar
 
 1. Entrá al panel con el usuario operador.
-2. Escribile al número del sandbox desde tu WhatsApp. La conversación aparece en
+2. Escribile al número de Twilio desde tu WhatsApp. La conversación aparece en
    la bandeja sin refrescar, con la etiqueta **IA**, y el bot contesta.
 3. Pedí hablar con una persona. Cuando el agente escala, la etiqueta pasa a
    **Pidió humano**.
@@ -214,7 +244,7 @@ El panel es estático, no necesita servidor propio. El agente sigue donde ya cor
 
 1. En Vercel, importá el repo y poné **Root Directory** en `web`. Vercel detecta
    Vite solo: build `npm run build`, output `dist`.
-2. Cargá las variables `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` y
+2. Cargá las variables `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` y
    `VITE_AGENT_URL`. Esta última tiene que ser la URL pública del agente (la de
    ngrok o la de tu servidor), con `https`.
 3. Con la URL que te da Vercel, poné `CRM_PANEL_ORIGIN=https://tu-panel.vercel.app`
@@ -435,6 +465,12 @@ AGENT_BACKEND=cli           # desarrollo, sin API key
 AGENT_BACKEND=messages_api  # producción
 ```
 
+`cli` usa tu suscripción de Claude Code, que según los
+[términos de Anthropic](https://code.claude.com/docs/en/legal-and-compliance) es
+para uso individual: un bot que atiende clientes es un servicio. En un servidor,
+`messages_api` con `ANTHROPIC_API_KEY`. Ojo: si `ANTHROPIC_API_KEY` está cargada,
+el subproceso de `claude -p` la usa en vez de la suscripción.
+
 El modo `cli` expone las tools a Claude Code por un server MCP
 (`src/whatsapp_skills/agent/mcp_server.py`) que recorre el mismo registry. Las
 firmas de Python se sintetizan desde los JSON Schema, así que **no hay
@@ -578,6 +614,7 @@ ruff check .
 python scripts/measure_tokens.py    # requiere ANTHROPIC_API_KEY
 python scripts/sync_skills.py       # skills/ -> .claude/skills/
 python scripts/inbox.py list        # bandeja de consola
+python scripts/create_operator.py vos@tuempresa.com   # alta de un operador del panel
 uvicorn whatsapp_skills.main:app --reload --port 8000
 ngrok http 8000
 
