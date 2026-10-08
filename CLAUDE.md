@@ -120,8 +120,8 @@ occasionally flakes; rerun before debugging it.
 
 ### Model configuration
 
-- The model ID is `claude-opus-5`. It is complete as written — **never append a
-  date suffix**.
+- The model ID is `claude-opus-5-5` (Opus 5.5; the second `-5` is the version,
+  not a date). It is complete as written — **never append a date suffix**.
 - Use `thinking: {"type": "adaptive"}`. `budget_tokens` is removed on Opus 5 and
   returns a 400.
 - Effort goes inside `output_config`, not at the top level:
