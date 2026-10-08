@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     # ID exacto. Nunca le agregues un sufijo de fecha: los IDs de la tabla de
     # modelos están completos tal cual.
-    anthropic_model: str = "claude-opus-5"
+    anthropic_model: str = "claude-opus-5-5"
     anthropic_effort: EffortLevel = "medium"
     anthropic_max_tokens: int = 8000
 

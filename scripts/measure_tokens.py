@@ -37,7 +37,7 @@ from whatsapp_skills.agent.prompt import PERSONA, static_system_prompt  # noqa: 
 from whatsapp_skills.observability.logging import force_utf8_output  # noqa: E402
 from whatsapp_skills.skills.registry import SkillRegistry  # noqa: E402
 
-MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5")
+MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-5-5")
 
 SAMPLE = "Hola, soy Juan Pérez, necesito una cotización para 500 unidades de X"
 

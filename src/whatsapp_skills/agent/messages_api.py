@@ -40,7 +40,7 @@ class MessagesAPIBackend:
         registry: SkillRegistry,
         *,
         api_key: str,
-        model: str = "claude-opus-5",
+        model: str = "claude-opus-5-5",
         effort: str = "medium",
         max_tokens: int = 8000,
         max_iterations: int = 8,

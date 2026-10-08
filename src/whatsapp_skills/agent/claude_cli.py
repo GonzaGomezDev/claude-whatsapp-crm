@@ -85,7 +85,7 @@ class ClaudeCLIBackend:
         registry: SkillRegistry,
         *,
         cli_path: str = "claude",
-        model: str = "claude-opus-5",
+        model: str = "claude-opus-5-5",
         effort: str = "medium",
         timeout_s: float = 120.0,
         max_budget_usd: float = 0.50,
