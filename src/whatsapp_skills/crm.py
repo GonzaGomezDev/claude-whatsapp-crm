@@ -1,7 +1,7 @@
 """CRM: lo que el panel le pide al agente.
 
-El panel sólo lee de Supabase (anon key + RLS). Todo lo que escribe pasa por
-acá, con la service_role key y las credenciales de Twilio, que nunca salen del
+El panel sólo lee de Supabase (publishable key + RLS). Todo lo que escribe pasa por
+acá, con la key secreta y las credenciales de Twilio, que nunca salen del
 servidor. El token es el JWT de Supabase Auth del operador.
 """
 

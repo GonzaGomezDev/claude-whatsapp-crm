@@ -57,7 +57,7 @@ def _who(row: dict[str, Any]) -> str:
 
 def _build() -> tuple[Any, Database, WhatsAppClient]:
     settings = get_settings()
-    db = Database(settings.supabase_url, settings.supabase_service_role_key)
+    db = Database(settings.supabase_url, settings.supabase_secret_key)
     wa = WhatsAppClient(
         settings.twilio_account_sid,
         settings.twilio_auth_token,

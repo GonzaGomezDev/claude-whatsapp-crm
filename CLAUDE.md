@@ -16,9 +16,10 @@ se construye encima. Todo lo que sigue a la línea divisoria describe el agente.
 - `webhook._process` lee el estado antes del router y del agente, y otra vez justo antes de enviar
   (`_still_bot`): el agente tarda segundos y el operador puede tomar el chat en ese medio.
 - `messages.phone` existe para que la bandeja muestre números que todavía no son clientes.
-- El panel (`web/`) sólo lee, con la anon key y RLS restringida a la tabla `operators`. Tomar, devolver
-  y responder pasan por `crm.py` (JWT de Supabase Auth → operador). Twilio y la service key nunca
-  llegan al navegador.
+- El panel (`web/`) sólo lee, con la publishable key y RLS restringida a la tabla `operators`. Tomar,
+  devolver y responder pasan por `crm.py` (JWT de Supabase Auth → operador). Twilio y la key secreta
+  de Supabase nunca llegan al navegador. Keys: `sb_publishable_`/`sb_secret_` (las anon/service_role
+  legacy se retiran a fines de 2026; `SUPABASE_SERVICE_ROLE_KEY` se sigue aceptando como alias).
 - Al devolver el chat, la nota del operador (`handoff_note`) entra en `prompt.dynamic_context`, después
   del breakpoint de cache.
 - `window.py` es la ventana de 24 h, compartida por `crm.py` y `scripts/inbox.py`.

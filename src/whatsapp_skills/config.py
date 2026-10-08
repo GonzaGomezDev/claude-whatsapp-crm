@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # El .env se resuelve contra la raíz del repo, no contra el cwd. El server MCP
@@ -60,7 +60,12 @@ class Settings(BaseSettings):
 
     # ── Supabase ────────────────────────────────────────────────────────────
     supabase_url: str = ""
-    supabase_service_role_key: str = ""
+    # Key secreta (sb_secret_...). La service_role legacy también sirve: Supabase
+    # la retira a fines de 2026, por eso se sigue aceptando el nombre viejo.
+    supabase_secret_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY"),
+    )
 
     # ── Handoff ─────────────────────────────────────────────────────────────
     handoff_notify_url: str = ""
@@ -95,10 +100,10 @@ class Settings(BaseSettings):
                     "en el PATH. Instalá Claude Code o ajustá CLAUDE_CLI_PATH."
                 )
 
-        if not self.supabase_url or not self.supabase_service_role_key:
+        if not self.supabase_url or not self.supabase_secret_key:
             missing.append(
-                "SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY son obligatorios: las 5 "
-                "skills leen y escriben en Supabase."
+                "SUPABASE_URL y SUPABASE_SECRET_KEY son obligatorios: las skills y el "
+                "CRM leen y escriben en Supabase."
             )
 
         if not self.twilio_account_sid or not self.twilio_auth_token:

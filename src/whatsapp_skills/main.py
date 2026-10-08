@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.settings = settings
     app.state.registry = registry
-    app.state.db = Database(settings.supabase_url, settings.supabase_service_role_key)
+    app.state.db = Database(settings.supabase_url, settings.supabase_secret_key)
     app.state.whatsapp = WhatsAppClient(
         settings.twilio_account_sid,
         settings.twilio_auth_token,

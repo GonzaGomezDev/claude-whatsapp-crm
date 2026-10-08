@@ -56,7 +56,7 @@ generando, la primera lectura ya pasó. Por eso el estado se vuelve a leer justo
 antes de enviar: si cambió a `human`, la respuesta del bot no sale (queda en los
 logs como `reply_dropped`).
 
-**El panel sólo lee.** Usa la anon key de Supabase con login, y las políticas de
+**El panel sólo lee.** Usa la publishable key de Supabase con login, y las políticas de
 RLS sólo dejan leer a los usuarios cargados en la tabla `operators`. Todo lo que
 escribe (tomar, devolver, responder) pasa por el agente, que es el único que
 tiene la service key y las credenciales de Twilio. Nada de eso llega al
@@ -116,30 +116,28 @@ búsqueda `search_knowledge`, las políticas de RLS, la publicación de Realtime
 tres documentos de ejemplo en la knowledge base. Es idempotente: si actualizás el
 repo, volvé a correrlo.
 
-En *Settings → API* copiá la URL y las dos keys. Cada una va a un lugar distinto:
+En *Project Settings → API Keys* copiá la URL y las dos keys. Cada una va a un lugar distinto:
 
 ```bash
-# .env (agente): la service_role, porque escribe en tablas con RLS activo
+# .env (agente): la secreta, porque escribe en tablas con RLS activo
 SUPABASE_URL=https://xxxx.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=eyJ...
+SUPABASE_SECRET_KEY=sb_secret_...
 
-# web/.env (panel): la anon, NUNCA la service_role. Va al navegador.
+# web/.env (panel): la publishable, NUNCA la secreta. Va al navegador.
 VITE_SUPABASE_URL=https://xxxx.supabase.co
-VITE_SUPABASE_ANON_KEY=eyJ...
+VITE_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```
 
 **Crear el operador.** Son chats de clientes: el panel sólo deja entrar a los
-usuarios cargados en `operators`.
+usuarios cargados en `operators`. Con el `.env` del agente completo:
 
-1. *Authentication → Users → Add user*: email y contraseña.
-2. *Authentication → Sign In / Providers*: apagá **Allow new users to sign up**,
-   así nadie se crea una cuenta solo.
-3. En el SQL Editor:
-
-```sql
-insert into public.operators (user_id)
-select id from auth.users where email = 'vos@tuempresa.com';
+```bash
+python scripts/create_operator.py vos@tuempresa.com    # genera la contraseña y la muestra
 ```
+
+Recomendado: en *Authentication → Sign In / Providers* apagá **Allow new users to
+sign up**. No es imprescindible (un usuario que no está en `operators` no ve ni
+toca nada), pero evita cuentas sueltas.
 
 ### 3. Twilio
 

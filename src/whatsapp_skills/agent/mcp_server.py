@@ -169,7 +169,7 @@ def main() -> None:
     ctx = SkillContext(
         phone=phone,
         settings=settings,
-        db=Database(settings.supabase_url, settings.supabase_service_role_key),
+        db=Database(settings.supabase_url, settings.supabase_secret_key),
         notifier=build_notifier(
             settings,
             WhatsAppClient(

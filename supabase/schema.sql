@@ -209,9 +209,9 @@ end;
 $do$;
 
 -- ── RLS ─────────────────────────────────────────────────────────────────────
--- El agente usa la service_role key, que hace bypass de RLS. Igual la
--- habilitamos: si algún día exponés un frontend contra el mismo proyecto, la
--- anon key no va a poder leer datos de clientes por defecto.
+-- El agente usa la key secreta, que hace bypass de RLS. El panel usa la
+-- publishable con el login del operador, y sólo lee lo que permiten las
+-- políticas de abajo (sección CRM).
 alter table public.clients        enable row level security;
 alter table public.messages       enable row level security;
 alter table public.tickets        enable row level security;
